@@ -55,12 +55,12 @@ One command per agent, run from the repo where you want the tools
 # Claude Code — project scope (writes .mcp.json in the repo root)
 claude mcp add paul --scope project \
   --env PAUL_URL='${PAUL_URL}' --env PAUL_EMAIL='${PAUL_EMAIL}' --env PAUL_PASSWORD='${PAUL_PASSWORD}' \
-  -- npx -y github:diegosiac/iventas-paul
+  -- npx -y github:iVentas-Plus/iventas-paul
 
 # Claude Code — user scope (all your projects, config outside the repo)
 claude mcp add paul --scope user \
   --env PAUL_URL='${PAUL_URL}' --env PAUL_EMAIL='${PAUL_EMAIL}' --env PAUL_PASSWORD='${PAUL_PASSWORD}' \
-  -- npx -y github:diegosiac/iventas-paul
+  -- npx -y github:iVentas-Plus/iventas-paul
 ```
 
 For Codex and OpenCode, paste the blocks below into their config files.
@@ -68,7 +68,7 @@ For Codex and OpenCode, paste the blocks below into their config files.
 ## Per-agent setup
 
 All examples run the server straight from GitHub with
-`npx -y github:diegosiac/iventas-paul` (Node 20+; private repos need git
+`npx -y github:iVentas-Plus/iventas-paul` (Node 20+; private repos need git
 authenticated with repo access on that machine). Prefer **project-scoped**
 config in your work repos: it keeps personal projects clean — agents only see
 the PAUL tools where they are relevant.
@@ -83,7 +83,7 @@ this exact block is safe to commit:
   "mcpServers": {
     "paul": {
       "command": "npx",
-      "args": ["-y", "github:diegosiac/iventas-paul"],
+      "args": ["-y", "github:iVentas-Plus/iventas-paul"],
       "env": {
         "PAUL_URL": "${PAUL_URL}",
         "PAUL_EMAIL": "${PAUL_EMAIL}",
@@ -106,7 +106,7 @@ NOT reach the server unless allowlisted with `env_vars`:
 ```toml
 [mcp_servers.paul]
 command = "npx"
-args = ["-y", "github:diegosiac/iventas-paul"]
+args = ["-y", "github:iVentas-Plus/iventas-paul"]
 env_vars = ["PAUL_URL", "PAUL_EMAIL", "PAUL_PASSWORD"]
 ```
 
@@ -125,7 +125,7 @@ string and the server fails fast telling you which one is missing):
   "mcp": {
     "paul": {
       "type": "local",
-      "command": ["npx", "-y", "github:diegosiac/iventas-paul"],
+      "command": ["npx", "-y", "github:iVentas-Plus/iventas-paul"],
       "environment": {
         "PAUL_URL": "{env:PAUL_URL}",
         "PAUL_EMAIL": "{env:PAUL_EMAIL}",
