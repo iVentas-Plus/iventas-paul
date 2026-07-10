@@ -1,5 +1,7 @@
 node_modules/
 *.log
 .env
+!.env.example
+smoke/
 iventas-coach/
 .atl

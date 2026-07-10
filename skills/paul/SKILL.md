@@ -1,15 +1,11 @@
 ---
 name: paul
 description: "Trigger: finish task, task done, register task, registrar tarea, checkpoint, PAUL. Register and close the user's tasks in PAUL via paul_* MCP tools."
-license: Apache-2.0
-metadata:
-  author: diegosiac
-  version: "1.1"
 ---
 
 ## Activation Contract
 
-Activate when dev work in a work project BEGINS (feature picked up, bug taken) and again when it reaches a done state (feature finished, bug fixed, PR merged), or the user asks to register/close a task in PAUL. Requires the paul_* MCP tools. Do nothing for personal projects unless asked.
+Activate when dev work in a work project BEGINS (feature picked up, bug taken) and again when it reaches a done state (feature finished, bug fixed, PR merged), or the user asks to register/close a task in PAUL. Requires the paul\_\* MCP tools. Do nothing for personal projects unless asked.
 
 ## Hard Rules
 
