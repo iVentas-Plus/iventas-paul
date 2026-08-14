@@ -217,7 +217,7 @@ describe("PaulClient.redGateAck", () => {
   const PLAN =
     "Registrar e iniciar la tarea en PAUL al comenzar el trabajo real y cerrarla al terminar.";
 
-  it("posts { flag_id, qa (hardcoded gate question), plan } to action=red_gate_ack", async () => {
+  it("posts { flag_id, qa keyed by 'mejora', plan } to action=red_gate_ack", async () => {
     const mock = mockFetchSequence([
       jsonResponse(LOGIN_OK, { cookie: "IVCOACH=a" }),
       jsonResponse({ ok: true, approved: true, message: "Plan aceptado." }),
@@ -231,8 +231,11 @@ describe("PaulClient.redGateAck", () => {
     expect(call.method).toBe("POST");
     expect(call.body).toEqual({
       flag_id: 12,
-      // The single gate question is hardcoded in lib/ai.php:548.
-      qa: [{ q: "¿Qué vas a hacer para que esto no vuelva a pasar?", a: PLAN }],
+      // The gate has a single question and the server keys it by the literal
+      // string 'mejora' — which is what PAUL's own web client sends. Sending
+      // the Spanish sentence instead (as this client used to) relies on the
+      // server matching on prose it never receives from the real UI.
+      qa: [{ q: "mejora", a: PLAN }],
       plan: PLAN,
     });
   });

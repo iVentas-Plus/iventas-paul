@@ -1,0 +1,302 @@
+/**
+ * Minimal HTML extraction for PAUL's admin panel.
+ *
+ * The panel is server-rendered PHP with no JSON API and no contract: the only
+ * way to read it is to parse what it prints. These helpers deliberately stay
+ * generic — one table extractor that works on every page — instead of a
+ * bespoke parser per page, because bespoke parsers are debt that breaks on the
+ * next markup tweak with no test able to notice.
+ *
+ * No new dependency: the project ships only the MCP SDK and zod, and a DOM
+ * parser is not worth pulling in for tag-stripping and row splitting.
+ */
+const ENTITIES = {
+    amp: "&",
+    lt: "<",
+    gt: ">",
+    quot: '"',
+    apos: "'",
+    nbsp: " ",
+    ntilde: "ñ",
+    aacute: "á",
+    eacute: "é",
+    iacute: "í",
+    oacute: "ó",
+    uacute: "ú",
+    uuml: "ü",
+    Ntilde: "Ñ",
+    hellip: "…",
+    mdash: "—",
+    ndash: "–",
+    middot: "·",
+};
+/** Decodes the HTML entities PAUL actually emits, including numeric ones. */
+export function decodeEntities(input) {
+    return input
+        .replace(/&#(\d+);/g, (_m, code) => String.fromCodePoint(Number(code)))
+        .replace(/&#[xX]([0-9a-fA-F]+);/g, (_m, hex) => String.fromCodePoint(parseInt(hex, 16)))
+        .replace(/&([a-zA-Z]+);/g, (m, name) => ENTITIES[name] ?? m);
+}
+/** Drops <script>/<style> blocks and every tag, leaving collapsed text. */
+export function stripTags(html) {
+    const withoutBlocks = html
+        .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+        .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ");
+    return decodeEntities(withoutBlocks.replace(/<[^>]+>/g, " "))
+        .replace(/[ \t ]+/g, " ")
+        .replace(/\s*\n\s*/g, "\n")
+        .trim();
+}
+/** Text of a single cell: tags stripped, entities decoded, whitespace collapsed. */
+function cellText(html) {
+    return stripTags(html).replace(/\s+/g, " ").trim();
+}
+/**
+ * Extracts every table on the page as headers + rows of plain text, tagged
+ * with the heading that precedes it. Works uniformly across redflags, delays,
+ * pulse, forecast, commitments, kicked, usage and settings.
+ *
+ * Caveats worth knowing when reading the output: the weekly red-flag count is
+ * rendered as repeated 🔴 glyphs rather than a digit, and forecast balances
+ * use U+2212 MINUS SIGN, not an ASCII hyphen.
+ */
+export function parseTables(html) {
+    const tables = [];
+    const tableRe = /<table\b[^>]*>([\s\S]*?)<\/table>/gi;
+    let match;
+    while ((match = tableRe.exec(html)) !== null) {
+        const body = match[1];
+        const rows = [];
+        let headers = [];
+        const rowRe = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
+        let rowMatch;
+        while ((rowMatch = rowRe.exec(body)) !== null) {
+            const cells = [];
+            let isHeader = false;
+            const cellRe = /<(t[hd])\b[^>]*>([\s\S]*?)<\/\1>/gi;
+            let cellMatch;
+            while ((cellMatch = cellRe.exec(rowMatch[1])) !== null) {
+                if (cellMatch[1].toLowerCase() === "th")
+                    isHeader = true;
+                cells.push(cellText(cellMatch[2]));
+            }
+            if (cells.length === 0)
+                continue;
+            if (isHeader && headers.length === 0)
+                headers = cells;
+            else
+                rows.push(cells);
+        }
+        if (headers.length === 0 && rows.length === 0)
+            continue;
+        tables.push({ section: headingBefore(html, match.index), headers, rows });
+    }
+    return tables;
+}
+/** The text of the closest <h1>/<h2> appearing before `index` in the document. */
+function headingBefore(html, index) {
+    const before = html.slice(0, index);
+    const headingRe = /<h[12]\b[^>]*>([\s\S]*?)<\/h[12]>/gi;
+    let last = null;
+    let m;
+    while ((m = headingRe.exec(before)) !== null)
+        last = cellText(m[1]);
+    return last;
+}
+/** Every <h1>/<h2> on the page, in order — a cheap outline of what it contains. */
+export function parseHeadings(html) {
+    const out = [];
+    const re = /<h[12]\b[^>]*>([\s\S]*?)<\/h[12]>/gi;
+    let m;
+    while ((m = re.exec(html)) !== null) {
+        const text = cellText(m[1]);
+        if (text)
+            out.push(text);
+    }
+    return out;
+}
+/**
+ * The headline numbers of a page.
+ *
+ * The panel prints these in TWO different shapes and neither is a superset of
+ * the other, so both are read: `index.php` uses `<div class="kpi">`, while
+ * `pulse.php`, `redflags.php` and `kicked.php` use a
+ * `<div class="px">value</div><div class="note">label</div>` pair. Reading
+ * only the first shape silently returns nothing on the pages that answer the
+ * "how is the team doing" question.
+ */
+export function parseKpis(html) {
+    const out = [];
+    const tileRe = /<div\b[^>]*class="[^"]*\bkpi\b[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
+    let m;
+    while ((m = tileRe.exec(html)) !== null) {
+        const text = cellText(m[1]);
+        if (text)
+            out.push(text);
+    }
+    const pairRe = /<div\b[^>]*class="px"[^>]*>([\s\S]*?)<\/div>\s*<div\b[^>]*class="note"[^>]*>([\s\S]*?)<\/div>/gi;
+    while ((m = pairRe.exec(html)) !== null) {
+        const value = cellText(m[1]);
+        const label = cellText(m[2]);
+        if (value || label)
+            out.push(`${value} ${label}`.trim());
+    }
+    return out;
+}
+/**
+ * True when the response is the admin login screen rather than a real page.
+ * The panel answers 200 with this form instead of a 401, so status codes
+ * cannot be used to detect an expired session.
+ */
+export function isAdminLoginPage(html) {
+    return /name="_form"\s+value="login"/i.test(html);
+}
+/** Escapes a field name for literal use inside a RegExp (dept[7] has brackets). */
+function escapeRe(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+/** Options of a named <select>, in document order. */
+export function parseSelectOptions(html, name) {
+    const selectRe = new RegExp(`<select\\b[^>]*name="${escapeRe(name)}"[^>]*>([\\s\\S]*?)</select>`, "i");
+    const block = selectRe.exec(html);
+    if (!block)
+        return [];
+    const out = [];
+    const optRe = /<option\b([^>]*)>([\s\S]*?)<\/option>/gi;
+    let m;
+    while ((m = optRe.exec(block[1])) !== null) {
+        const valueMatch = /value="([^"]*)"/i.exec(m[1]);
+        // objectives.php renders options with no value attribute at all; the
+        // browser then submits the option's text, so mirror that here.
+        const label = cellText(m[2]);
+        out.push({ value: valueMatch ? decodeEntities(valueMatch[1]) : label, label });
+    }
+    return out;
+}
+/**
+ * Parses the mission cards of `admin/tasks.php`, which is scoped to a single
+ * collaborator via `?u=<uid>`. Each card is a form-bearing
+ * `<div class="... adm-task" data-id="N">`.
+ */
+export function parseAdminTasks(html) {
+    const out = [];
+    // Split on the card boundary rather than trying to match balanced divs:
+    // the cards contain nested forms, which no regex can pair reliably.
+    const parts = html.split(/<div\b[^>]*\bdata-id="(\d+)"[^>]*>/i);
+    for (let i = 1; i < parts.length; i += 2) {
+        const id = Number(parts[i]);
+        const card = parts[i + 1] ?? "";
+        const plain = stripTags(card);
+        out.push({
+            id,
+            title: inputValue(card, "title") ?? "",
+            type: inputValue(card, "type") ?? "",
+            estMin: numberOrNull(inputValue(card, "est_min")),
+            priority: numberOrNull(selectedValue(card, "priority")),
+            status: pillStatus(card),
+            rank: numberOrNull(firstCapture(card, /<span\b[^>]*class="rank"[^>]*>(\d+)<\/span>/i)),
+            context: textareaValue(card, "context") ?? "",
+            client: firstCapture(plain, /cliente:\s*([^\n·]+)/i),
+            requester: firstCapture(plain, /Solicitada por\s+([^\n·]+)/i),
+            week: firstCapture(plain, /sem\.\s*del\s*([0-9-]+)/i),
+        });
+    }
+    return out;
+}
+function firstCapture(source, re) {
+    const m = re.exec(source);
+    return m ? decodeEntities(m[1]).trim() : null;
+}
+function numberOrNull(value) {
+    if (value === null || value.trim() === "")
+        return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+}
+/** The `value` of a named <input> inside a fragment. */
+export function inputValue(html, name) {
+    const re = new RegExp(`<input\\b[^>]*name="${escapeRe(name)}"[^>]*>`, "i");
+    const tag = re.exec(html);
+    if (!tag)
+        return null;
+    const value = /value="([^"]*)"/i.exec(tag[0]);
+    return value ? decodeEntities(value[1]) : "";
+}
+/** The text content of a named <textarea> inside a fragment. */
+export function textareaValue(html, name) {
+    const re = new RegExp(`<textarea\\b[^>]*name="${escapeRe(name)}"[^>]*>([\\s\\S]*?)</textarea>`, "i");
+    const m = re.exec(html);
+    return m ? decodeEntities(m[1]).trim() : null;
+}
+/** The `value` of the selected <option> of a named <select>. */
+export function selectedValue(html, name) {
+    const selectRe = new RegExp(`<select\\b[^>]*name="${escapeRe(name)}"[^>]*>([\\s\\S]*?)</select>`, "i");
+    const block = selectRe.exec(html);
+    if (!block)
+        return null;
+    const sel = /<option\b[^>]*value="([^"]*)"[^>]*\bselected\b/i.exec(block[1]);
+    return sel ? decodeEntities(sel[1]) : null;
+}
+/** The status pill PAUL prints on a task card (`done`, `pendiente`, `en curso`). */
+function pillStatus(card) {
+    const m = /<span\b[^>]*class="[^"]*\bpill\b[^"]*"[^>]*>([\s\S]*?)<\/span>/i.exec(card);
+    if (!m)
+        return null;
+    const text = cellText(m[1]);
+    return text === "" ? null : text;
+}
+/**
+ * Parses the collaborator cards of `admin/people.php`. Every person has an
+ * `update_user` form carrying their uid; administrators are exactly the people
+ * for whom no `delete_user` form is rendered.
+ */
+export function parseAdminPeople(html) {
+    const forms = splitForms(html);
+    const deletable = new Set();
+    for (const form of forms) {
+        if (inputValue(form, "_form") === "delete_user") {
+            const uid = inputValue(form, "uid");
+            if (uid)
+                deletable.add(uid);
+        }
+    }
+    const out = [];
+    const seen = new Set();
+    for (const form of forms) {
+        if (inputValue(form, "_form") !== "update_user")
+            continue;
+        const uid = inputValue(form, "uid");
+        if (!uid || seen.has(uid))
+            continue;
+        seen.add(uid);
+        out.push({
+            uid,
+            name: inputValue(form, "name") ?? "",
+            email: inputValue(form, "email"),
+            role: inputValue(form, "role"),
+            isAdmin: /<input\b[^>]*name="is_admin"[^>]*\bchecked\b/i.test(form),
+            protected: !deletable.has(uid),
+        });
+    }
+    return out;
+}
+/**
+ * Splits a document into its individual `<form>` bodies.
+ *
+ * Done by segmenting on `</form>` and keeping what follows the LAST `<form`
+ * in each segment, rather than with one regex per form. A lazy
+ * `<form>([\s\S]*?)</form>` pattern that also has to match something inside
+ * the body happily skips across a closing tag to find it, which silently
+ * pairs one person's uid with the next person's name — a defect this
+ * parser shipped with until real data exposed it.
+ */
+function splitForms(html) {
+    const out = [];
+    for (const segment of html.split(/<\/form>/i).slice(0, -1)) {
+        const start = segment.toLowerCase().lastIndexOf("<form");
+        if (start === -1)
+            continue;
+        out.push(segment.slice(start));
+    }
+    return out;
+}

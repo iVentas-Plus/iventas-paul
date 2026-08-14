@@ -1,25 +1,78 @@
 # iventas-paul
 
 MCP server (stdio) that lets AI coding agents — Claude Code, Codex, OpenCode —
-register and close the user's tasks in **PAUL** (the iVentas COACH task
-manager). After finishing dev work, the agent finds the matching task, starts
-it, requests PAUL's 3 AI validation questions, and answers them with the real
-context of the session's work. There is no direct create-task API in PAUL, so
-new tasks are registered through PAUL's coach chat dialogue with defensive
-verification against the task list.
+register, assign and close the user's tasks in **PAUL** (the iVentas COACH task
+manager), report bugs and ideas, and administer the team. After finishing dev
+work, the agent finds the matching task, starts it, requests PAUL's 3 AI
+validation questions, and answers them with the real context of the session's
+work.
 
 ## Tools
+
+### Tasks
 
 | Tool | Purpose |
 | --- | --- |
 | `paul_tasks` | List the user's tasks with a summary of counts by status |
 | `paul_start_task` | Start (or resume) a task by id |
+| `paul_task_action` | Pause, send to review, delete, bounce, reassign, or move a task between weeks |
+| `paul_reorder_task` | Move a pending task in the queue (spends 1 of 5 weekly priority moves) |
+
+### Assignment
+
+| Tool | Purpose |
+| --- | --- |
+| `paul_people` | The roster — the only source of the `uid` every assignment needs |
+| `paul_register_task` | Create a task in your own list (one direct API call) |
+| `paul_assign_task` | Create a task in someone else's list |
+| `paul_undo_assignment` | Delete a task you just created, within the server's undo window |
+
+### Closing a task
+
+| Tool | Purpose |
+| --- | --- |
 | `paul_get_checkpoint` | Get PAUL's 3 validation questions (begins the close flow) |
 | `paul_submit_checkpoint` | Submit answers; returns PAUL's verdict |
-| `paul_register_task` | Register a new task via the chat dialogue, verified against state |
-| `paul_reorder_task` | Move a pending task in the queue (spends 1 of 5 weekly priority moves) |
 | `paul_resolve_red_gate` | Resolve a team-visible red flag with an honest prevention plan |
-| `paul_chat` | Free-form message to PAUL (reorder, pause, ask anything) |
+
+### Bugs, ideas and tips
+
+| Tool | Purpose |
+| --- | --- |
+| `paul_bugs` | List team bugs grouped by status, with the assignable roster |
+| `paul_report_bug` | Report a bug (the server de-duplicates and may merge it into an existing one) |
+| `paul_assign_bug` | Assign an unassigned bug to a teammate |
+| `paul_ideas` | List ideas for improving PAUL, with vote counts |
+| `paul_create_idea` | Propose an idea |
+| `paul_vote_idea` | Upvote an idea |
+| `paul_tips` | PAUL's coaching tips — daily, or scoped to one task |
+
+### Administration (accounts with the administrator role)
+
+| Tool | Purpose |
+| --- | --- |
+| `paul_admin_status` | Team-wide status: forecast, delays, red flags, pulse, commitments, kicked, history |
+| `paul_admin_tasks` | Any collaborator's board, or a sweep of everyone's |
+| `paul_admin_task_write` | Create, edit, delete or force-complete any task, for any person |
+| `paul_admin_people` | List, create, delete collaborators and reset their passwords |
+| `paul_admin_page` | Read any admin page not covered by a dedicated tool |
+| `paul_admin_action` | Submit any admin form not covered by a dedicated tool |
+| `paul_admin_ask` | Ask PAUL's own copilot a question across the whole admin dataset |
+
+### Coach
+
+| Tool | Purpose |
+| --- | --- |
+| `paul_chat` | Free-form message to PAUL |
+
+> **How PAUL sees people.** Every assignment identifies a person by their
+> **uid** (`david`, `diegoc`, `aleks`) — never by name and never by email.
+> Resolve it with `paul_people` first.
+>
+> **The admin plane is a separate login.** PAUL is one PHP app with one session
+> cookie and two independent authentications: the JSON API and the admin panel.
+> The JSON API cannot tell you whether an account is an administrator — only
+> attempting the panel login can, which is what the `paul_admin_*` tools do.
 
 ## Configuration
 
