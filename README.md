@@ -166,6 +166,21 @@ env_vars = ["PAUL_URL", "PAUL_EMAIL", "PAUL_PASSWORD"]
 Alternatively, hardcode static values under `[mcp_servers.paul.env]` (keep
 that file out of version control).
 
+> **Codex sandbox — read this before reporting a bug.** Under Codex's default
+> `workspace-write` sandbox every tool call here is cancelled, and the model
+> reports it as *"MCP tool call was canceled"* with nothing in the server's
+> logs. The cause is that MCP subprocesses do **not** inherit
+> `sandbox_workspace_write.network_access`: a shell `curl` to the same host
+> succeeds while the MCP server is still blocked. This server needs the
+> network for every call, so run Codex with:
+>
+> ```sh
+> codex --sandbox danger-full-access
+> ```
+>
+> This is a Codex limitation and it applies to any network-dependent MCP
+> server, not just this one. Claude Code and OpenCode are unaffected.
+
 ### OpenCode — project `opencode.json`
 
 `{env:VAR}` placeholders are expanded by OpenCode from the environment, so

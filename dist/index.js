@@ -29,6 +29,7 @@ import { registerBugsTools } from "./tools/bugs.js";
 import { registerIdeasTools } from "./tools/ideas.js";
 import { registerTipsTools } from "./tools/tips.js";
 import { registerAdminTools } from "./tools/admin.js";
+import { applyCallToolArgumentCompat } from "./mcp-compat.js";
 async function main() {
     // Fail fast on missing configuration, before accepting any MCP traffic.
     const config = configFromEnv();
@@ -59,7 +60,10 @@ async function main() {
     registerChatTool(server, client);
     // Administration
     registerAdminTools(server, admin);
-    await server.connect(new StdioServerTransport());
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    // Must come after connect(): that call is what assigns transport.onmessage.
+    applyCallToolArgumentCompat(transport);
 }
 main().catch((err) => {
     console.error(`paul-mcp failed to start: ${err instanceof Error ? err.message : String(err)}`);
