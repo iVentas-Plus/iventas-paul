@@ -30,6 +30,7 @@ describe("paul_tasks", () => {
         moves_left: 2,
         ro: true,
         pending_red_gate: { flag_id: 3, reason: "too_fast", title: "Fix login" },
+        notifs_new: 4,
       }),
     ]);
     const handler = captureToolHandler(registerTasksTool, makeClient());
@@ -38,6 +39,7 @@ describe("paul_tasks", () => {
 
     expect(res.isError).toBeUndefined();
     const payload = JSON.parse(res.content[0].text) as Record<string, unknown>;
+    expect(payload.notifs_new).toBe(4);
     expect(payload.moves_left).toBe(2);
     expect(payload.budget_ok).toBe(false);
     expect(payload.ro).toBe(true);
@@ -68,5 +70,7 @@ describe("paul_tasks", () => {
     expect(payload.budget_ok).toBe(true);
     expect(payload.ro).toBe(false);
     expect(payload.pending_red_gate).toBeNull();
+    // A build of PAUL without the bell must read as "nothing pending", never NaN.
+    expect(payload.notifs_new).toBe(0);
   });
 });

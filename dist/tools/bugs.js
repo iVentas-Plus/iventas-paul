@@ -34,7 +34,9 @@ export function registerBugsTools(server, client) {
             "problems. Also returned: `can_assign` (false = this account may not " +
             "assign bugs at all, so paul_assign_bug will be refused) and `team`, the " +
             "assignable roster as { uid, name } — those uids ARE valid for " +
-            "paul_assign_bug.",
+            "paul_assign_bug. This is the HISTORICAL board: new work is filed in " +
+            "the Peticiones queue (paul_requests), and a row here can be moved " +
+            "there with paul_create_request migrateSrc 'bug' + migrateId.",
         inputSchema: {},
     }, async () => {
         try {
@@ -61,9 +63,13 @@ export function registerBugsTools(server, client) {
         }
     });
     server.registerTool("paul_report_bug", {
-        title: "Report a bug in PAUL",
+        title: "Report a bug in PAUL (historical board)",
         description: "Report a bug in PAUL itself (the coach app), not in the user's own " +
-            "product. The report is visible to the whole team. IMPORTANT: a " +
+            "product. PREFER paul_create_request with kind 'bug': PAUL moved team " +
+            "requests to the Peticiones queue and now labels this board " +
+            "'histórico'. It is still live — use it only when the user explicitly " +
+            "asks for the bug board, or to add a note to a bug that already lives " +
+            "here. The report is visible to the whole team. IMPORTANT: a " +
             "response with `grouped: true` means the server judged this report " +
             "equivalent to an existing bug and merged it in as a NOTE instead of " +
             "creating a new bug — that is a SUCCESS, not a failure: the report was " +

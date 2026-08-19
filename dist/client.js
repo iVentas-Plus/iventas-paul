@@ -276,6 +276,103 @@ export class PaulClient {
     requests() {
         return this.request("requests");
     }
+    /* ---------- Peticiones (the team request queue) ---------- */
+    /** POST action=req_list with {} — the whole queue, plus the assignable roster. */
+    reqList() {
+        return this.request("req_list", {});
+    }
+    /**
+     * POST action=req_create — files a request.
+     *
+     * The server validates `kind` (400 bad_kind) and the title length (400
+     * short), but NOT `urgency`: an unknown value is silently stored as `media`,
+     * verified in production with "altisima". The caller must therefore close
+     * that enum itself, or a request meant to be urgent lands as medium with no
+     * error to notice.
+     *
+     * `money_month`/`months_min` are ignored by the UI when `money_kind` is
+     * `otro` — that branch means "no amount, judge it by context" — so this
+     * method drops the amount in that case rather than sending a number the
+     * board would render as a value it does not have.
+     */
+    reqCreate(input) {
+        const isOther = (input.moneyKind ?? "gana") === "otro";
+        return this.request("req_create", {
+            kind: input.kind,
+            title: input.title,
+            detail: input.detail ?? "",
+            money_kind: input.moneyKind ?? "gana",
+            money_other: isOther ? (input.moneyOther ?? "no_se") : null,
+            money_month: isOther ? 0 : (input.moneyMonth ?? 0),
+            months_min: input.monthsMin ?? 1,
+            urgency: input.urgency ?? "media",
+            ...(input.migrateSrc && input.migrateId !== undefined
+                ? { migrate_src: input.migrateSrc, migrate_id: input.migrateId }
+                : {}),
+        });
+    }
+    /**
+     * POST action=req_thread with { id } — the request, its whole comment thread
+     * and the roster of people who can be @-mentioned in it. 404 not_found for an
+     * id that does not exist. Open to everyone, including accounts whose
+     * `can_assign` is false.
+     */
+    reqThread(id) {
+        return this.request("req_thread", { id });
+    }
+    /**
+     * POST action=req_comment with { id, body, mentions } — posts to the thread.
+     *
+     * `mentions` carries EXACT uids and is what actually rings someone's bell;
+     * the `@Name` text in the body is only display. PAUL also tries to resolve
+     * names on its own and answers `had_at: true, mentioned: 0` when the body
+     * had an `@` that matched nobody (an ambiguous first name like `@Diego`, of
+     * which the roster has two) — the comment is still posted.
+     */
+    reqComment(id, body, mentions = []) {
+        return this.request("req_comment", { id, body, mentions });
+    }
+    /**
+     * POST action=req_take with { id } — claim a `nueva` request for yourself.
+     * Answers 409 bad_status once somebody else already took it.
+     */
+    reqTake(id) {
+        return this.request("req_take", { id });
+    }
+    /**
+     * POST action=req_assign with { id, person_uid, urgency } — hand a `nueva`
+     * request to a teammate. 400 bad_person for a uid outside the roster,
+     * 409 bad_status once it is assigned.
+     */
+    reqAssign(id, personUid, urgency) {
+        return this.request("req_assign", {
+            id,
+            person_uid: personUid,
+            urgency,
+        });
+    }
+    /**
+     * POST action=req_status with { id, status, reason } — closes a request as
+     * `hecha` or discards it as `descartada`. Those are the ONLY two values the
+     * server accepts; `nueva` and `asignada` answer 400 bad_status, so a request
+     * cannot be reopened this way. No state machine is enforced beyond that: a
+     * `hecha` request can still be moved to `descartada`.
+     *
+     * Discarding does NOT delete the task that `req_take`/`req_assign` created —
+     * that task stays on its owner's board and must be removed separately.
+     */
+    reqStatus(id, status, reason = "") {
+        return this.request("req_status", { id, status, reason });
+    }
+    /* ---------- Notifications (the bell) ---------- */
+    /** POST action=notifs_list with {} — mentions and thread activity for this user. */
+    notifsList() {
+        return this.request("notifs_list", {});
+    }
+    /** POST action=notifs_seen with {} — marks EVERY notification as read. */
+    notifsSeen() {
+        return this.request("notifs_seen", {});
+    }
     /* ---------- Bugs ---------- */
     /** POST action=bugs_list with {} — every team bug, plus the assignable roster. */
     bugsList() {

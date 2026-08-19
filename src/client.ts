@@ -110,6 +110,13 @@ export interface StateResponse {
   bugs_new?: number;
   /** Whether this user may see the bug tool at all. */
   sees_bugs?: boolean;
+  /** Unread bell notifications — @mentions and activity on request threads. */
+  notifs_new?: number;
+  /** Unread direct messages from teammates. */
+  peer_unread?: number;
+  /** PAUL's own build tag, e.g. "2026.08.18-2 · hilos-campanita". */
+  build?: string;
+  app_version?: number;
   [k: string]: unknown;
 }
 
@@ -300,6 +307,180 @@ export interface RequestedTask {
 
 export interface RequestsResponse {
   requests: RequestedTask[];
+}
+
+/* ---------- Peticiones (the team request queue, api.php `req_*`) ---------- */
+
+/**
+ * PAUL's "Peticiones" section — ONE queue where the team files bugs, ideas,
+ * improvements and support asks, ordered by the money each one brings in or
+ * stops losing. It supersedes the older bug board and idea board, which the UI
+ * now labels "histórico" and offers to migrate rows FROM.
+ *
+ * Do not confuse it with `requests()` above (api.php `action=requests`), an
+ * unrelated, pre-existing action that lists TASKS the user delegated to others.
+ * The two share an English word and nothing else.
+ */
+export type ReqKind = "bug" | "idea" | "mejora" | "soporte";
+
+/** nueva → asignada → hecha, or → descartada. `req_status` only writes the last two. */
+export type ReqStatus = "nueva" | "asignada" | "hecha" | "descartada";
+
+/** gana = brings money in, ahorra = stops losing it, otro = qualitative instead. */
+export type ReqMoneyKind = "gana" | "ahorra" | "otro";
+
+/** The qualitative context offered when `money_kind` is `otro` (no amount). */
+export type ReqMoneyOther =
+  | "cliente_grande"
+  | "cliente_renovar"
+  | "cliente_importante"
+  | "no_se";
+
+/**
+ * The request queue adds `urgente` on top of the three levels used everywhere
+ * else in PAUL. Picking it notifies the admins (app + on-call WhatsApp), which
+ * is why the UI asks for a second confirmation before accepting it.
+ */
+export type ReqUrgency = "urgente" | "alta" | "media" | "baja";
+
+export interface PaulRequest {
+  id: number;
+  /** bug | idea | mejora | soporte */
+  kind: string;
+  title: string;
+  detail: string | null;
+  /** gana | ahorra | otro */
+  money_kind: string;
+  /** Set only when money_kind is `otro`. */
+  money_other: string | null;
+  money_month: number;
+  months_min: number;
+  /** money_month * months_min — the minimum value that orders the queue. */
+  total: number;
+  urgency: string;
+  /** nueva | asignada | hecha | descartada */
+  status: string;
+  /** Why it was discarded; shown to whoever filed it. */
+  reason: string | null;
+  /** Display NAME of whoever filed it, never a uid. */
+  who: string;
+  /** Display NAME of the assignee, never a uid. */
+  assignee: string | null;
+  /** true when the current user filed it. */
+  mine: boolean;
+  /** How many comments its thread already holds. */
+  comments: number;
+  at: string;
+}
+
+export interface RequestQueueResponse {
+  reqs: PaulRequest[];
+  /** false = this account may only file and comment, never take/assign/close. */
+  can_assign: boolean;
+  team: PeerContact[];
+}
+
+export interface RequestCreateInput {
+  kind: ReqKind;
+  title: string;
+  detail?: string;
+  moneyKind?: ReqMoneyKind;
+  moneyOther?: ReqMoneyOther | null;
+  moneyMonth?: number;
+  monthsMin?: number;
+  urgency?: ReqUrgency;
+  /** Set together to move an old bug/idea row into this queue. */
+  migrateSrc?: "bug" | "idea";
+  migrateId?: number;
+}
+
+export interface RequestCreateResponse {
+  ok: boolean;
+  /** The new request's id. */
+  id?: number;
+  message?: string;
+}
+
+export interface RequestComment {
+  id: number;
+  uid: string;
+  first: string;
+  body: string;
+  at: string;
+  /** true when the current user wrote it. */
+  mine: boolean;
+}
+
+/** A thread participant. `full` disambiguates the two Diegos on the roster. */
+export interface RequestRosterEntry {
+  uid: string;
+  first: string;
+  full: string;
+}
+
+export interface RequestThreadResponse {
+  ok: boolean;
+  req: {
+    id: number;
+    kind: string;
+    title: string;
+    status: string;
+    urgency: string;
+    /** Pre-rendered Spanish money line, e.g. "🛟 evita perder $120/mes · >=12m". */
+    money: string;
+    who: string;
+    assignee: string | null;
+  };
+  comments: RequestComment[];
+  roster: RequestRosterEntry[];
+}
+
+export interface RequestCommentResponse {
+  ok: boolean;
+  /** The new comment's id. */
+  id?: number;
+  first?: string;
+  at?: string;
+  /** How many people PAUL actually rang the bell for. */
+  mentioned?: number;
+  /** true when the body contained an `@`, whether or not it resolved. */
+  had_at?: boolean;
+  message?: string;
+}
+
+/**
+ * Answer of `req_take` and `req_assign`. Both CREATE a real task in the
+ * assignee's mission board and hand back its id — verified in production.
+ */
+export interface RequestClaimResponse {
+  ok: boolean;
+  /** Display NAME of whoever the request landed on. */
+  assigned_to?: string;
+  /** Id of the task created in that person's board. */
+  task_id?: number;
+  message?: string;
+}
+
+/* ---------- Notifications (the bell, api.php `notifs_*`) ---------- */
+
+export interface PaulNotification {
+  id: number;
+  /** mencion = somebody @-mentioned you; otherwise activity on a thread you are in. */
+  kind: string;
+  /** Id of the request whose thread it points at, as a STRING. */
+  ref: string | null;
+  title: string | null;
+  body: string;
+  /** Display NAME of the sender. */
+  from: string;
+  seen: boolean;
+  at: string;
+}
+
+export interface NotificationsResponse {
+  ok: boolean;
+  notifs: PaulNotification[];
+  unseen?: number;
 }
 
 /**
@@ -600,6 +781,122 @@ export class PaulClient {
   /** GET action=requests — tasks the user delegated to others. */
   requests(): Promise<RequestsResponse> {
     return this.request<RequestsResponse>("requests");
+  }
+
+  /* ---------- Peticiones (the team request queue) ---------- */
+
+  /** POST action=req_list with {} — the whole queue, plus the assignable roster. */
+  reqList(): Promise<RequestQueueResponse> {
+    return this.request<RequestQueueResponse>("req_list", {});
+  }
+
+  /**
+   * POST action=req_create — files a request.
+   *
+   * The server validates `kind` (400 bad_kind) and the title length (400
+   * short), but NOT `urgency`: an unknown value is silently stored as `media`,
+   * verified in production with "altisima". The caller must therefore close
+   * that enum itself, or a request meant to be urgent lands as medium with no
+   * error to notice.
+   *
+   * `money_month`/`months_min` are ignored by the UI when `money_kind` is
+   * `otro` — that branch means "no amount, judge it by context" — so this
+   * method drops the amount in that case rather than sending a number the
+   * board would render as a value it does not have.
+   */
+  reqCreate(input: RequestCreateInput): Promise<RequestCreateResponse> {
+    const isOther = (input.moneyKind ?? "gana") === "otro";
+    return this.request<RequestCreateResponse>("req_create", {
+      kind: input.kind,
+      title: input.title,
+      detail: input.detail ?? "",
+      money_kind: input.moneyKind ?? "gana",
+      money_other: isOther ? (input.moneyOther ?? "no_se") : null,
+      money_month: isOther ? 0 : (input.moneyMonth ?? 0),
+      months_min: input.monthsMin ?? 1,
+      urgency: input.urgency ?? "media",
+      ...(input.migrateSrc && input.migrateId !== undefined
+        ? { migrate_src: input.migrateSrc, migrate_id: input.migrateId }
+        : {}),
+    });
+  }
+
+  /**
+   * POST action=req_thread with { id } — the request, its whole comment thread
+   * and the roster of people who can be @-mentioned in it. 404 not_found for an
+   * id that does not exist. Open to everyone, including accounts whose
+   * `can_assign` is false.
+   */
+  reqThread(id: number): Promise<RequestThreadResponse> {
+    return this.request<RequestThreadResponse>("req_thread", { id });
+  }
+
+  /**
+   * POST action=req_comment with { id, body, mentions } — posts to the thread.
+   *
+   * `mentions` carries EXACT uids and is what actually rings someone's bell;
+   * the `@Name` text in the body is only display. PAUL also tries to resolve
+   * names on its own and answers `had_at: true, mentioned: 0` when the body
+   * had an `@` that matched nobody (an ambiguous first name like `@Diego`, of
+   * which the roster has two) — the comment is still posted.
+   */
+  reqComment(
+    id: number,
+    body: string,
+    mentions: string[] = [],
+  ): Promise<RequestCommentResponse> {
+    return this.request<RequestCommentResponse>("req_comment", { id, body, mentions });
+  }
+
+  /**
+   * POST action=req_take with { id } — claim a `nueva` request for yourself.
+   * Answers 409 bad_status once somebody else already took it.
+   */
+  reqTake(id: number): Promise<RequestClaimResponse> {
+    return this.request<RequestClaimResponse>("req_take", { id });
+  }
+
+  /**
+   * POST action=req_assign with { id, person_uid, urgency } — hand a `nueva`
+   * request to a teammate. 400 bad_person for a uid outside the roster,
+   * 409 bad_status once it is assigned.
+   */
+  reqAssign(id: number, personUid: string, urgency: ReqUrgency): Promise<RequestClaimResponse> {
+    return this.request<RequestClaimResponse>("req_assign", {
+      id,
+      person_uid: personUid,
+      urgency,
+    });
+  }
+
+  /**
+   * POST action=req_status with { id, status, reason } — closes a request as
+   * `hecha` or discards it as `descartada`. Those are the ONLY two values the
+   * server accepts; `nueva` and `asignada` answer 400 bad_status, so a request
+   * cannot be reopened this way. No state machine is enforced beyond that: a
+   * `hecha` request can still be moved to `descartada`.
+   *
+   * Discarding does NOT delete the task that `req_take`/`req_assign` created —
+   * that task stays on its owner's board and must be removed separately.
+   */
+  reqStatus(
+    id: number,
+    status: "hecha" | "descartada",
+    reason = "",
+  ): Promise<SimpleOkResponse> {
+    return this.request<SimpleOkResponse>("req_status", { id, status, reason });
+  }
+
+  /* ---------- Notifications (the bell) ---------- */
+
+  /** POST action=notifs_list with {} — mentions and thread activity for this user. */
+  notifsList(): Promise<NotificationsResponse> {
+    return this.request<NotificationsResponse>("notifs_list", {});
+  }
+
+  /** POST action=notifs_seen with {} — marks EVERY notification as read. */
+  notifsSeen(): Promise<SimpleOkResponse> {
+    return this.request<SimpleOkResponse>("notifs_seen", {});
   }
 
   /* ---------- Bugs ---------- */

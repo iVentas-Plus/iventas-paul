@@ -23,7 +23,10 @@ export function registerIdeasTools(server, client) {
             "planeada | lista | descartada) and `voted`, which tells whether the " +
             "CURRENT user already voted for it — check it before calling " +
             "paul_vote_idea. Ideas are not work items: they never appear in " +
-            "paul_tasks and nobody is assigned to them.",
+            "paul_tasks and nobody is assigned to them. This is the HISTORICAL " +
+            "board: new work is filed in the Peticiones queue (paul_requests), and " +
+            "a row here can be moved there with paul_create_request migrateSrc " +
+            "'idea' + migrateId.",
         inputSchema: {},
     }, async () => {
         try {
@@ -44,8 +47,13 @@ export function registerIdeasTools(server, client) {
         }
     });
     server.registerTool("paul_create_idea", {
-        title: "Propose an idea to improve PAUL",
-        description: "Post an idea to PAUL's improvement board. IMPORTANT: ideas are " +
+        title: "Propose an idea to improve PAUL (historical board)",
+        description: "Post an idea to PAUL's improvement board. PREFER paul_create_request " +
+            "with kind 'idea': PAUL moved team requests to the Peticiones queue, " +
+            "where an idea is ordered by the money it brings, and now labels this " +
+            "board 'histórico'. It is still live — use it only when the user asks " +
+            "for the idea board or wants the upvote mechanic, which the new queue " +
+            "does not have. IMPORTANT: ideas are " +
             "PRODUCT FEEDBACK ABOUT PAUL ITSELF (the coach app) — how it should " +
             "behave, what it should add, what annoys the team. They are NOT work " +
             "items: to file work for the user or a teammate use paul_register_task, " +

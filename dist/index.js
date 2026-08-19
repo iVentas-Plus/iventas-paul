@@ -29,6 +29,8 @@ import { registerChatTool } from "./tools/chat.js";
 import { registerBugsTools } from "./tools/bugs.js";
 import { registerIdeasTools } from "./tools/ideas.js";
 import { registerTipsTools } from "./tools/tips.js";
+import { registerRequestsTools } from "./tools/requests.js";
+import { registerNotificationsTool } from "./tools/notifications.js";
 import { registerAdminTools } from "./tools/admin.js";
 import { applyCallToolArgumentCompat } from "./mcp-compat.js";
 async function main() {
@@ -38,7 +40,7 @@ async function main() {
     // The admin plane shares the collaborator's session: same cookie, separate
     // authentication.
     const admin = new PaulAdminClient(config, client.session);
-    const server = new McpServer({ name: "paul-mcp", version: "1.1.0" });
+    const server = new McpServer({ name: "paul-mcp", version: "1.2.0" });
     // Tasks
     registerTasksTool(server, client);
     registerStartTaskTool(server, client);
@@ -54,7 +56,11 @@ async function main() {
     registerSubmitCheckpointTool(server, client);
     registerRedGateTool(server, client);
     registerConfirmNotifiedTool(server, client);
-    // Bugs, ideas and PAUL's own tips
+    // Peticiones — the team request queue that supersedes the bug/idea boards,
+    // and the bell that carries its @mentions.
+    registerRequestsTools(server, client);
+    registerNotificationsTool(server, client);
+    // Bugs, ideas and PAUL's own tips (the historical boards)
     registerBugsTools(server, client);
     registerIdeasTools(server, client);
     registerTipsTools(server, client);

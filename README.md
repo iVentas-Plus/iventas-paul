@@ -2,10 +2,10 @@
 
 MCP server (stdio) that lets AI coding agents — Claude Code, Codex, OpenCode —
 register, assign and close the user's tasks in **PAUL** (the iVentas COACH task
-manager), report bugs and ideas, and administer the team. After finishing dev
-work, the agent finds the matching task, starts it, requests PAUL's 3 AI
-validation questions, and answers them with the real context of the session's
-work.
+manager), file and triage team requests, read their discussion threads, and
+administer the team. After finishing dev work, the agent finds the matching
+task, starts it, requests PAUL's 3 AI validation questions, and answers them
+with the real context of the session's work.
 
 ## Tools
 
@@ -36,7 +36,18 @@ work.
 | `paul_resolve_red_gate` | Resolve a team-visible red flag with an honest prevention plan |
 | `paul_confirm_notified` | Clear a task parked until its requester confirms the client was told |
 
-### Bugs, ideas and tips
+### Peticiones — the team request queue
+
+| Tool | Purpose |
+| --- | --- |
+| `paul_requests` | The queue grouped by status, with each request's declared money value |
+| `paul_create_request` | File a bug, idea, mejora or soporte request (also migrates a historical row) |
+| `paul_request_thread` | Read one request with its whole comment thread and mention roster |
+| `paul_comment_request` | Comment on a thread, notifying people by uid |
+| `paul_request_action` | Take, assign, close (`hecha`) or discard a request |
+| `paul_notifications` | The bell: @mentions and thread activity; optionally mark them read |
+
+### Bugs, ideas and tips (historical boards)
 
 | Tool | Purpose |
 | --- | --- |
@@ -66,6 +77,22 @@ work.
 | --- | --- |
 | `paul_chat` | Free-form message to PAUL |
 
+> **Peticiones replaced the bug and idea boards.** PAUL now has ONE queue for
+> everything the team asks for — bugs, ideas, improvements and support — ordered
+> by the money each request brings in or stops the company losing. File new work
+> with `paul_create_request`; `paul_report_bug` and `paul_create_idea` still
+> work but PAUL labels their boards *histórico*, and a row can be moved across
+> with `migrateSrc` + `migrateId`.
+>
+> **Taking or assigning a request creates a real task.** `paul_request_action`
+> with `take`/`assign` returns a `task_id` that exists in that person's mission
+> board — and discarding the request afterwards does NOT delete it.
+>
+> **@mentions need uids, not names.** The `@Name` text in a comment is display
+> only; the bell rings from the `mentionUids` array. Two people share the first
+> name *Diego*, so `@Diego` notifies nobody — `paul_request_thread` reports the
+> ambiguous names, and `paul_comment_request` warns when a mention rang no one.
+>
 > **How PAUL sees people.** Every assignment identifies a person by their
 > **uid** (`david`, `diegoc`, `aleks`) — never by name and never by email.
 > Resolve it with `paul_people` first.
