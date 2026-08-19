@@ -125,7 +125,13 @@ export class PaulClient {
      * (coach nudges), so it must never be called merely to learn who we are.
      */
     async currentUid() {
-        if (!this.session.hasCookie())
+        // The trigger is the MISSING uid, never the missing cookie. All three
+        // planes share one IVCOACH cookie, so an admin-panel login leaves
+        // `hasCookie()` true while api.php was never authenticated and no uid was
+        // ever reported. Keying on the cookie made this return null after an admin
+        // login, and paul_register_task then blamed PAUL for "not reporting the
+        // uid" — reproduced in production.
+        if (this.uid === null)
             await this.login();
         return this.uid;
     }
@@ -184,19 +190,6 @@ export class PaulClient {
     /** GET action=peer_contacts — the roster, and the only source of valid uids. */
     peerContacts() {
         return this.request("peer_contacts");
-    }
-    /**
-     * POST action=peer_assign — creates a task for `person_uid` in ONE call.
-     * Verified against production as working "cold": it needs no prior chat and
-     * no server-side pending assignment. It does NOT return the new task id.
-     */
-    peerAssign(input) {
-        return this.request("peer_assign", {
-            title: input.title,
-            person_uid: input.personUid,
-            est_min: input.estMin,
-            urgency: input.urgency,
-        });
     }
     /**
      * POST action=assign_confirm — the richer direct create. Also verified to
@@ -262,6 +255,22 @@ export class PaulClient {
     /** POST action=pull_week with { id } — pulls a future task into this week. */
     pullWeek(id) {
         return this.request("pull_week", { id });
+    }
+    /**
+     * POST action=confirm_notified with { id } — closes a task that is parked
+     * waiting for its REQUESTER to state the client was told the work is done.
+     * A task created with a "Solicitada por" is NOT closed by its executor: the
+     * app leaves it in that waiting state and the requester clears it with the
+     * button labelled "✓ YA AVISÉ YO" (admin/tasks.php), which fires exactly
+     * this action.
+     *
+     * NOT verified against production, unlike every other action in this file:
+     * reaching that state requires closing a real client task. The shape follows
+     * the app's own `api('confirm_notified', { id })` call and matches every
+     * other single-id action here.
+     */
+    confirmNotified(id) {
+        return this.request("confirm_notified", { id });
     }
     /** GET action=requests — tasks the user delegated to others. */
     requests() {

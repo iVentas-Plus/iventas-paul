@@ -9,9 +9,9 @@ export function registerStartTaskTool(server, client) {
             "reality. Three 409 errors and their recoveries: 'order' — only the " +
             "FIRST pending task in queue order can be started; use paul_reorder_task " +
             "with to=0 to move this task to the top (spends a weekly move) or " +
-            "finish the current first pending first. 'parallel_limit' — at most 2 " +
-            "tasks active, and the effective-time clock splits 50/50 between them " +
-            "while 2 run; finish or pause one first. 'need_client_brief' — " +
+            "finish the current first pending first. 'parallel_limit' — at most 4 " +
+            "tasks active at the same time; paused tasks do NOT count toward the " +
+            "limit, so finish or pause one to free a slot. 'need_client_brief' — " +
             "sales-department users on client tasks only; the user must fill the " +
             "client context/KPIs in PAUL's UI, this MCP cannot. A task in 'waiting' " +
             "status resumes with this same tool and SKIPS the order gate. If the " +

@@ -51,6 +51,38 @@ describe("PaulSession", () => {
     expect(initOf(mock, 0).redirect).toBe("manual");
   });
 
+  it("ignores an unrelated cookie so an edge/WAF cookie cannot hijack the session", async () => {
+    // This install sits behind nginx/Plesk. If the edge sets a cookie of its
+    // own on any response, adopting it would silently replace the whole PAUL
+    // session with something that authenticates nothing.
+    const mock = mockFetchSequence([
+      jsonResponse({ ok: true }, { cookie: "IVCOACH=real; path=/" }),
+      jsonResponse({ ok: true }, { cookie: "PLESK_WAF=deadbeef; path=/" }),
+      jsonResponse({ ok: true }),
+    ]);
+    const session = new PaulSession();
+
+    await session.fetch("https://paul.example.com/login");
+    await session.fetch("https://paul.example.com/next");
+    await session.fetch("https://paul.example.com/third");
+
+    expect(headerOf(mock, 2, "cookie")).toBe("IVCOACH=real");
+  });
+
+  it("does not adopt an unrelated cookie when no session cookie exists yet", async () => {
+    const mock = mockFetchSequence([
+      jsonResponse({ ok: true }, { cookie: "PLESK_WAF=deadbeef; path=/" }),
+      jsonResponse({ ok: true }),
+    ]);
+    const session = new PaulSession();
+
+    await session.fetch("https://paul.example.com/first");
+
+    expect(session.hasCookie()).toBe(false);
+    await session.fetch("https://paul.example.com/second");
+    expect(headerOf(mock, 1, "cookie")).toBeUndefined();
+  });
+
   it("clear() forces the next call to authenticate again", async () => {
     mockFetchSequence([jsonResponse({ ok: true }, { cookie: "IVCOACH=abc" })]);
     const session = new PaulSession();

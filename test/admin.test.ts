@@ -288,31 +288,65 @@ describe("paul_admin_task_write", () => {
     await handlerFor(registerAdminTaskWriteTool, admin)({
       action: "update",
       id: 698,
+      userUid: "arturo",
       title: "Nuevo título",
       type: "propia",
       estMin: 30,
       priority: 3,
       context: "ctx",
-      clientContext: "cc",
-      clientKpis: "k1\nk2",
     });
 
     expect(admin.updateTask).toHaveBeenCalledWith({
       id: 698,
+      userUid: "arturo",
       title: "Nuevo título",
       type: "propia",
       estMin: 30,
       priority: 3,
       context: "ctx",
-      clientContext: "cc",
-      clientKpis: "k1\nk2",
     });
+  });
+
+  it("update accepts a partial edit: the client merges the rest", async () => {
+    const admin = fakeAdmin();
+    const res = await handlerFor(registerAdminTaskWriteTool, admin)({
+      action: "update",
+      id: 698,
+      userUid: "arturo",
+      priority: 1,
+    });
+
+    expect(res.isError).toBeUndefined();
+    expect(admin.updateTask).toHaveBeenCalledWith({
+      id: 698,
+      userUid: "arturo",
+      title: undefined,
+      type: undefined,
+      estMin: undefined,
+      priority: 1,
+      context: undefined,
+    });
+  });
+
+  it("update without a userUid refuses before making a request", async () => {
+    const admin = fakeAdmin();
+    const res = await handlerFor(registerAdminTaskWriteTool, admin)({
+      action: "update",
+      id: 698,
+      title: "Nuevo título",
+    });
+
+    expect(res.isError).toBe(true);
+    expect(String(payloadOf(res).message)).toContain("userUid");
+    expect(String(payloadOf(res).message)).toContain("paul_admin_tasks");
+    expect(admin.updateTask).not.toHaveBeenCalled();
   });
 
   it("update without an id refuses before making a request", async () => {
     const admin = fakeAdmin();
     const res = await handlerFor(registerAdminTaskWriteTool, admin)({
       action: "update",
+      userUid: "arturo",
       title: "Sin id",
     });
 
@@ -327,8 +361,19 @@ describe("paul_admin_task_write", () => {
     await handler({ action: "delete", id: 12 });
     await handler({ action: "complete", id: 34 });
 
-    expect(admin.deleteTask).toHaveBeenCalledWith(12);
-    expect(admin.completeTask).toHaveBeenCalledWith(34);
+    expect(admin.deleteTask).toHaveBeenCalledWith(12, undefined);
+    expect(admin.completeTask).toHaveBeenCalledWith(34, undefined);
+  });
+
+  it("delete and complete forward the optional userUid so the right board comes back", async () => {
+    const admin = fakeAdmin();
+    const handler = handlerFor(registerAdminTaskWriteTool, admin);
+
+    await handler({ action: "delete", id: 12, userUid: "arturo" });
+    await handler({ action: "complete", id: 34, userUid: "david" });
+
+    expect(admin.deleteTask).toHaveBeenCalledWith(12, "arturo");
+    expect(admin.completeTask).toHaveBeenCalledWith(34, "david");
   });
 
   it("negative: a PaulAdminError from the panel is surfaced as an error result", async () => {
@@ -407,6 +452,59 @@ describe("paul_admin_people", () => {
     expect(admin.deleteUser).toHaveBeenCalledWith("antonio");
     expect(admin.resetPassword).toHaveBeenCalledWith("antonio");
     expect(String(payloadOf(reset).text)).toContain("Nueva contraseña: abc123");
+  });
+
+  it("reset_password returns the password line only, not the whole page", async () => {
+    const admin = fakeAdmin({
+      resetPassword: vi.fn(
+        async () =>
+          `<h2>Colaboradores</h2><p>Aquí va toda la plantilla del panel</p>${PEOPLE_HTML}` +
+          "<p>Nueva contraseña: abc123</p>",
+      ),
+    });
+    const payload = payloadOf(
+      await handlerFor(registerAdminPeopleTool, admin)({
+        action: "reset_password",
+        uid: "antonio",
+      }),
+    );
+
+    expect(String(payload.text)).toContain("abc123");
+    expect(String(payload.text)).not.toContain("toda la plantilla");
+    expect(payload.people).toHaveLength(2);
+  });
+
+  it("create and delete omit the page text entirely, keeping the parsed roster", async () => {
+    const admin = fakeAdmin();
+    const handler = handlerFor(registerAdminPeopleTool, admin);
+
+    const created = payloadOf(await handler({ action: "create", uid: "nuevo", name: "Nuevo" }));
+    const deleted = payloadOf(await handler({ action: "delete", uid: "antonio" }));
+
+    expect(created.text).toBeUndefined();
+    expect(created.note).toBeUndefined();
+    expect(created.people).toHaveLength(2);
+    expect(deleted.text).toBeUndefined();
+    expect(deleted.people).toHaveLength(2);
+  });
+
+  it("boundary: reset_password keeps the page when no password line is found", async () => {
+    // The isolating match is best-effort on wording never verified against the
+    // live panel, and PAUL shows the new password ONCE. So a miss must fall
+    // back to the page rather than silently destroying the secret.
+    const page = `${PEOPLE_HTML}<p>Clave temporal de antonio: 7fQ2x9</p>`;
+    const admin = fakeAdmin({ resetPassword: vi.fn(async () => page) });
+    const payload = payloadOf(
+      await handlerFor(registerAdminPeopleTool, admin)({
+        action: "reset_password",
+        uid: "antonio",
+      }),
+    );
+
+    // "Clave temporal" matches none of the phrasings we look for, so the line
+    // cannot be isolated — and the secret must survive anyway.
+    expect(String(payload.text)).toContain("7fQ2x9");
+    expect(String(payload.note)).toMatch(/password/i);
   });
 
   it("a write without a uid refuses before making a request", async () => {

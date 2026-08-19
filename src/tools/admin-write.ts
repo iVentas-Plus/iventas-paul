@@ -9,7 +9,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { PaulAdminClient } from "../admin-client.js";
 import { ADMIN_PAGES } from "../admin-client.js";
-import { parseHeadings, parseAdminTasks, parseAdminPeople } from "../admin-parse.js";
+import { parseHeadings, parseAdminTasks, parseAdminPeople, stripTags } from "../admin-parse.js";
 import { textResult, errorResult, type ToolResult } from "./shared.js";
 import { truncateText, unknownPageResult } from "./admin-read.js";
 
@@ -21,13 +21,24 @@ function missingFieldResult(message: string): ToolResult {
 const TASK_WRITE_DESCRIPTION =
   "Create, edit, delete or complete a task for ANY collaborator, as an " +
   "administrator. Four actions: 'create' needs userUid + title; 'update' " +
-  "needs id + title; 'delete' and 'complete' need id. Things that are easy to " +
+  "needs id + userUid; 'delete' and 'complete' need id, and take userUid " +
+  "optionally so the board that comes back is the right person's. Things that " +
+  "are easy to " +
   "get wrong: (1) THE ASSIGNEE IS `userUid` — the person the task is FOR. " +
   "`requesterUid` is a different thing: whoever ASKED for the task. Putting " +
   "the requester in userUid assigns the work to the wrong person. (2) " +
-  "'update' CANNOT change the assignee and CANNOT change the status — the " +
+  "'update' MERGES: it reads the stored task first and re-sends every field " +
+  "that is omitted, so a title-only edit keeps the type, the estimate, the " +
+  "priority and the context untouched — but an explicit empty string DOES " +
+  "clear a field. It needs `userUid` (the assignee, from paul_admin_tasks) " +
+  "because the edit form lives on that person's board; an id that is not on " +
+  "that board is refused without writing anything. 'update' CANNOT change the " +
+  "assignee and CANNOT change the status — the " +
   "panel exposes no field for either, so a task can only be reassigned by " +
-  "deleting and recreating it. (3) 'delete' is a HARD ADMIN DELETE: it " +
+  "deleting and recreating it. It also cannot write the client dossier " +
+  "(client context and client KPIs): those are filled in by the collaborator " +
+  "in PAUL's own UI and the panel posts no field for them. (3) 'delete' is a " +
+  "HARD ADMIN DELETE: it " +
   "removes the task immediately, with no approval queue and no undo (unlike a " +
   "collaborator's own delete request, which PAUL queues for review). (4) " +
   "'complete' closes the task WITHOUT a checkpoint — no evidence, no time " +
@@ -52,7 +63,11 @@ export function registerAdminTaskWriteTool(
         userUid: z
           .string()
           .optional()
-          .describe("create: uid of the ASSIGNEE — the person who will do the task"),
+          .describe(
+            "uid of the ASSIGNEE — the person who will do the task. Required for " +
+              "create and update; optional for delete/complete, where it only " +
+              "decides whose board is returned",
+          ),
         title: z.string().optional().describe("Task title (create/update)"),
         type: z.string().optional().describe("Free-text task type, e.g. 'asignada'"),
         estMin: z.number().int().positive().optional().describe("Estimated minutes"),
@@ -73,8 +88,6 @@ export function registerAdminTaskWriteTool(
           .optional()
           .describe("create only: uid of whoever ASKED for the task (not the assignee)"),
         clientName: z.string().optional().describe("create only: client the task belongs to"),
-        clientContext: z.string().optional().describe("update only: client context field"),
-        clientKpis: z.string().optional().describe("update only: client KPIs, one per line"),
       },
     },
     async (args) => {
@@ -99,8 +112,6 @@ export interface TaskWriteArgs {
   context?: string;
   requesterUid?: string;
   clientName?: string;
-  clientContext?: string;
-  clientKpis?: string;
 }
 
 async function runTaskWrite(
@@ -130,27 +141,30 @@ async function runTaskWrite(
   }
   if (action === "update") {
     if (typeof args.id !== "number") return missingFieldResult("update needs `id`.");
-    if (!args.title) {
+    if (!args.userUid) {
       return missingFieldResult(
-        "update needs `title`: the panel's edit form posts every field at once, so " +
-          "omitting the title would blank it.",
+        "update needs `userUid`: the uid of the task's ASSIGNEE. The panel's edit " +
+          "form only exists on that person's board, so without it the edit would " +
+          "be applied to whoever the panel defaults to. Read the uid from " +
+          "paul_admin_tasks, which reports the owner of every task id.",
       );
     }
     const html = await admin.updateTask({
       id: args.id,
+      userUid: args.userUid,
       title: args.title,
       type: args.type,
       estMin: args.estMin,
       priority: args.priority,
       context: args.context,
-      clientContext: args.clientContext,
-      clientKpis: args.clientKpis,
     });
     return taskWriteResult(action, html, { id: args.id });
   }
   if (typeof args.id !== "number") return missingFieldResult(`${action} needs \`id\`.`);
   const html =
-    action === "delete" ? await admin.deleteTask(args.id) : await admin.completeTask(args.id);
+    action === "delete"
+      ? await admin.deleteTask(args.id, args.userUid)
+      : await admin.completeTask(args.id, args.userUid);
   return taskWriteResult(action, html, { id: args.id });
 }
 
@@ -270,13 +284,44 @@ async function runPeopleAction(
   return peopleWriteResult(action, args.uid, html);
 }
 
+/**
+ * The panel prints the freshly issued password in one sentence of an otherwise
+ * ordinary people page. Anchored on the keyword and capped, so the result
+ * carries the secret and not the whole roster page around it.
+ */
+const PASSWORD_PHRASE = /(?:nueva\s+)?(?:contrase[nñ]a|password|pin)\b[^\n]{0,80}/gi;
+
+/** The sentence carrying the new password, or the whole page when it eludes us. */
+function passwordLine(html: string): { text: string; note?: string } {
+  const matches = stripTags(html).match(PASSWORD_PHRASE) ?? [];
+  // A page can mention the word in a button label; the one that carries a
+  // value after a separator is the announcement, so prefer the last of those.
+  const withValue = matches.filter((m) => /[:=]\s*\S/.test(m));
+  const hit = (withValue.length > 0 ? withValue : matches).at(-1);
+  if (hit) return { text: hit.trim() };
+  // Isolating the line is a best-effort match on wording we could not verify
+  // against the live panel, and the password is shown ONCE. So a miss falls
+  // back to the page text rather than dropping it: handing the whole page to
+  // the admin who just triggered the reset is a far smaller problem than
+  // destroying a secret that cannot be recovered.
+  return {
+    ...truncateText(html),
+    note:
+      "The password line could not be isolated, so the whole page is returned " +
+      "in `text` — the password is shown only once and must not be dropped. " +
+      "Read it from there, hand it to the user, and do not repeat the rest.",
+  };
+}
+
 function peopleWriteResult(action: string, uid: string, html: string): ToolResult {
   return textResult({
     ok: true,
     action,
     uid,
     people: parseAdminPeople(html),
-    ...truncateText(html),
+    // Only reset_password has anything to read in the page body; for create and
+    // delete the parsed roster IS the answer, and dumping the page is noise.
+    ...(action === "reset_password" ? passwordLine(html) : {}),
   });
 }
 

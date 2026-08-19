@@ -14,7 +14,9 @@ export function registerPeopleTool(server, client) {
             "this FIRST whenever the user names a person in words ('assign it to " +
             "David') so you can map that name to a uid instead of guessing it. " +
             "Note that PAUL itself appears in the roster as the uid 'paul': it is " +
-            "the coach bot, not a teammate, so never assign human work to it.",
+            "the coach bot, not a teammate, so never assign human work to it, and " +
+            "it is returned apart as `bot`. The `total` counts the `people` array " +
+            "only, so it never includes the bot.",
         inputSchema: {},
     }, async () => {
         try {
@@ -25,9 +27,13 @@ export function registerPeopleTool(server, client) {
                 first: c.first,
                 dept: c.dept ?? null,
             }));
+            // `total` describes `people`, not the raw roster: PAUL's own bot is
+            // returned separately, so counting it here would make a caller print
+            // "12 people" above a list of 11.
+            const people = contacts.filter((c) => c.uid !== "paul");
             return textResult({
-                total: contacts.length,
-                people: contacts.filter((c) => c.uid !== "paul"),
+                total: people.length,
+                people,
                 bot: contacts.find((c) => c.uid === "paul") ?? null,
             });
         }

@@ -63,16 +63,27 @@ export class PaulSession {
         this.captureCookie(res);
         return res;
     }
-    /** Extracts the IVCOACH cookie from a response, if it set one. */
+    /**
+     * Extracts the IVCOACH cookie from a response, if it set one.
+     *
+     * ONLY a cookie literally named IVCOACH is accepted, and a response that
+     * carries none leaves the current cookie untouched. This install sits behind
+     * nginx/Plesk, which sets cookies of its own; falling back to the first
+     * Set-Cookie (as this used to) let any edge/WAF cookie silently replace the
+     * whole PAUL session with one that authenticates nothing.
+     *
+     * The deliberate consequence: if PAUL ever renames its session cookie, this
+     * captures nothing and every call fails loudly with `no_auth` — which is the
+     * intended outcome. A renamed session cookie must break visibly, never be
+     * swapped in silently.
+     */
     captureCookie(res) {
         const setCookies = typeof res.headers.getSetCookie === "function"
             ? res.headers.getSetCookie()
             : res.headers.get("set-cookie")
                 ? [res.headers.get("set-cookie")]
                 : [];
-        if (setCookies.length === 0)
-            return;
-        const session = setCookies.find((c) => c.startsWith("IVCOACH=")) ?? setCookies[0];
+        const session = setCookies.find((c) => c.startsWith("IVCOACH="));
         if (session)
             this.cookie = session.split(";")[0];
     }

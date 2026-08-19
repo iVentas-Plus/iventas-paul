@@ -71,6 +71,8 @@ describe("paul_people", () => {
 
     expect(payload.people.map((p) => p.uid)).toEqual(["javi"]);
     expect(payload.bot?.uid).toBe("paul");
+    // `total` counts the humans it is printed next to, never the bot.
+    expect(payload.total).toBe(1);
   });
 
   it("handles an empty roster without throwing", async () => {

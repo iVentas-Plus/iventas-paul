@@ -27,6 +27,7 @@ import {
 } from "./tools/task-actions.js";
 import { registerReorderTaskTool } from "./tools/reorder-task.js";
 import { registerRedGateTool } from "./tools/red-gate.js";
+import { registerConfirmNotifiedTool } from "./tools/notify.js";
 import { registerChatTool } from "./tools/chat.js";
 import { registerBugsTools } from "./tools/bugs.js";
 import { registerIdeasTools } from "./tools/ideas.js";
@@ -60,6 +61,7 @@ async function main(): Promise<void> {
   registerGetCheckpointTool(server, client);
   registerSubmitCheckpointTool(server, client);
   registerRedGateTool(server, client);
+  registerConfirmNotifiedTool(server, client);
 
   // Bugs, ideas and PAUL's own tips
   registerBugsTools(server, client);

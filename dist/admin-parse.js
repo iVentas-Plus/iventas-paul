@@ -30,11 +30,29 @@ const ENTITIES = {
     ndash: "–",
     middot: "·",
 };
+/** Highest legal Unicode code point; String.fromCodePoint throws above it. */
+const MAX_CODE_POINT = 0x10ffff;
+/**
+ * Turns a numeric entity's value into its character, or gives the entity back
+ * unchanged when the value is not a usable code point.
+ *
+ * `String.fromCodePoint` throws `RangeError` for anything above U+10FFFF, for
+ * a negative value and for `NaN`. Left unguarded that exception escapes the
+ * `replace` callback and aborts the parse of the ENTIRE page, so one malformed
+ * entity costs every table on it. Today PAUL escapes its output with
+ * `htmlspecialchars`, which never emits such an entity, but a guard is one
+ * comparison and the failure mode it prevents is total.
+ */
+function codePointOrOriginal(value, original) {
+    if (!Number.isInteger(value) || value < 0 || value > MAX_CODE_POINT)
+        return original;
+    return String.fromCodePoint(value);
+}
 /** Decodes the HTML entities PAUL actually emits, including numeric ones. */
 export function decodeEntities(input) {
     return input
-        .replace(/&#(\d+);/g, (_m, code) => String.fromCodePoint(Number(code)))
-        .replace(/&#[xX]([0-9a-fA-F]+);/g, (_m, hex) => String.fromCodePoint(parseInt(hex, 16)))
+        .replace(/&#(\d+);/g, (m, code) => codePointOrOriginal(Number(code), m))
+        .replace(/&#[xX]([0-9a-fA-F]+);/g, (m, hex) => codePointOrOriginal(parseInt(hex, 16), m))
         .replace(/&([a-zA-Z]+);/g, (m, name) => ENTITIES[name] ?? m);
 }
 /** Drops <script>/<style> blocks and every tag, leaving collapsed text. */

@@ -41,16 +41,21 @@ ninguno es deducible del código cliente:
 
 **La premisa es falsa.** Existen tres altas directas, y el MCP no usaba ninguna:
 
-| Acción | Payload | Respuesta |
-| --- | --- | --- |
-| `peer_assign` | `{title, person_uid, est_min, urgency}` | `{ok, assigned_to}` |
-| `assign_confirm` | `{person_uid, title, urgency, client, reason, suggested_uid, est_min}` | `{ok, reply, undo_id, queued}` |
-| `ideas_import` | `{items:[{title, est_min, priority, weeks}]}` | `{ok}` (alta masiva) |
+| Acción | Payload | Respuesta | ¿La usa el MCP? |
+| --- | --- | --- | --- |
+| `peer_assign` | `{title, person_uid, est_min, urgency}` | `{ok, assigned_to}` | No — no devuelve id |
+| `assign_confirm` | `{person_uid, title, urgency, client, reason, suggested_uid, est_min}` | `{ok, reply, undo_id, queued}` | **Sí** |
+| `ideas_import` | `{items:[{title, est_min, priority, weeks}]}` | `{ok}` (alta masiva) | No — fuera de alcance |
 
 Se probaron **en vivo, en frío** (sin diálogo previo ni `pending_assign` en
 sesión) y las dos primeras funcionan. `assign_confirm` es la mejor: su
 `undo_id` **es el id de la tarea nueva** — exactamente el dato que la
 implementación anterior intentaba deducir.
+
+La tabla documenta el catálogo del servidor, no la superficie del MCP: solo
+`assign_confirm` está expuesta. `peer_assign` se descartó porque no devuelve el
+id de la tarea creada, y el alta masiva de `ideas_import` no tiene un caso de
+uso pedido.
 
 ### Qué costaba el camino conversacional
 

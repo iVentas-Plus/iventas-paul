@@ -34,6 +34,7 @@ work.
 | `paul_get_checkpoint` | Get PAUL's 3 validation questions (begins the close flow) |
 | `paul_submit_checkpoint` | Submit answers; returns PAUL's verdict |
 | `paul_resolve_red_gate` | Resolve a team-visible red flag with an honest prevention plan |
+| `paul_confirm_notified` | Clear a task parked until its requester confirms the client was told |
 
 ### Bugs, ideas and tips
 
@@ -170,16 +171,27 @@ that file out of version control).
 > `workspace-write` sandbox every tool call here is cancelled, and the model
 > reports it as *"MCP tool call was canceled"* with nothing in the server's
 > logs. The cause is that MCP subprocesses do **not** inherit
-> `sandbox_workspace_write.network_access`: a shell `curl` to the same host
-> succeeds while the MCP server is still blocked. This server needs the
-> network for every call, so run Codex with:
+> `sandbox_workspace_write.network_access`. Measured on Codex, in this order:
+>
+> | Configuration | Shell `curl` to PAUL | MCP tool call |
+> | --- | --- | --- |
+> | default `workspace-write` | 200 | cancelled |
+> | `-c sandbox_workspace_write.network_access=true` | 200 | **still cancelled** |
+> | `--sandbox danger-full-access` | 200 | works |
+>
+> So granting network access to the workspace is NOT a fix — it was tried and
+> the subprocess stayed blocked. Until Codex propagates that permission to MCP
+> subprocesses, the only configuration that works is:
 >
 > ```sh
 > codex --sandbox danger-full-access
 > ```
 >
-> This is a Codex limitation and it applies to any network-dependent MCP
-> server, not just this one. Claude Code and OpenCode are unaffected.
+> Scope it deliberately: that flag lifts the sandbox for the whole session, so
+> prefer a session started in the repo you are working on rather than making it
+> the global default. This is a Codex limitation and it applies to any
+> network-dependent MCP server, not just this one. Claude Code and OpenCode are
+> unaffected and need no sandbox change.
 
 ### OpenCode — project `opencode.json`
 

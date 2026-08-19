@@ -33,10 +33,11 @@ This project tracks work in PAUL (iVentas COACH) through the paul_* MCP tools.
   'pause').
 - Task titles are plain fields: any wording is fine, including "dar de alta",
   "prioridad media" or "urgente".
-- Found something broken? `paul_report_bug`. A `grouped: true` reply means the
-  server merged your report into an existing bug — that is success. Ideas for
-  improving PAUL itself go to `paul_create_idea` (they are product feedback,
-  not work items).
+- Found something broken IN PAUL ITSELF? `paul_report_bug`. It is PAUL's own
+  bug board — a bug in the product your team builds does NOT go here, it goes
+  to your normal issue tracker. A `grouped: true` reply means the server merged
+  your report into an existing bug — that is success. Ideas for improving PAUL
+  go to `paul_create_idea` (they are feedback about PAUL, not work items).
 - Don't poll `paul_tasks` in a loop: the state endpoint has server-side side
   effects (coach messages, nudges).
 - Checkpoint answers MUST describe the real work from this session: what was
@@ -45,5 +46,7 @@ This project tracks work in PAUL (iVentas COACH) through the paul_* MCP tools.
   retry once. Report PAUL's verdict to the user verbatim.
 - The paul_admin_* tools work only for accounts with the administrator role,
   and their writes hit a live panel with no undo. Never run one the user did
-  not ask for.
+  not ask for, and ask for confirmation immediately before EACH mutation,
+  naming the tool, the exact target (task id or uid) and what becomes
+  irreversible. Confirming one mutation does not authorise the next.
 ```

@@ -19,7 +19,7 @@ Activate when dev work in a work project BEGINS (feature picked up, bug taken) a
 - Never invent a task id. Resolve it from `paul_tasks` first.
 - Don't poll `paul_tasks` in a loop: the state endpoint has server-side side effects (coach messages, nudges).
 - Preserve PAUL's Spanish replies verbatim when reporting them.
-- Admin writes (`paul_admin_task_write`, `paul_admin_people`, `paul_admin_action`) hit a live panel with **no undo and no confirmation step**. Never run one that the user did not ask for.
+- Admin writes (`paul_admin_task_write`, `paul_admin_people`, `paul_admin_action`) hit a live panel with **no undo and no confirmation step**. Never run one the user did not ask for, and ask the user to confirm immediately before EACH one, naming the tool, the exact target (task id or uid) and what becomes irreversible. A confirmation given for one mutation does not carry over to the next.
 
 ## Decision Gates
 
@@ -29,7 +29,7 @@ Activate when dev work in a work project BEGINS (feature picked up, bug taken) a
 - Wrong assignment just made → `paul_undo_assignment` with the returned `taskId`, immediately. Past the window, `paul_task_action` action `delete`.
 - `paul_start_task` returns `error: order` → `paul_reorder_task` with to=0 (costs 1 of 5 weekly moves — spend consciously) or finish the current first pending task.
 - `paul_start_task` returns `error: parallel_limit` → finish or pause one first (`paul_task_action` action `pause`).
-- Something in the product is broken → `paul_report_bug`. A `grouped: true` reply means PAUL merged it into an existing bug: that is success, not failure.
+- Something in **PAUL itself** is broken → `paul_report_bug`. It is PAUL's own bug board, not the user's product tracker — a bug in the product the team builds does NOT go here. A `grouped: true` reply means PAUL merged it into an existing bug: that is success, not failure.
 - An improvement to PAUL itself → `paul_create_idea`. Ideas are feedback about PAUL, not work items.
 - The user asks how the team is doing → `paul_admin_status` with the page that answers it (`forecast` for who won't close the week, `delays` for late deliveries, `redflags` for red flags, `pulse` for activity, `commitments`, `kicked`, `history`).
 - The user asks about someone else's tasks → `paul_admin_tasks` (with a uid when you know it; without one it sweeps everybody, one request per person).

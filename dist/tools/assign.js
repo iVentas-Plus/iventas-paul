@@ -1,5 +1,43 @@
 import { z } from "zod";
+import { PaulApiError } from "../client.js";
 import { textResult, errorResult } from "./shared.js";
+/**
+ * Warning for a create whose outcome is UNKNOWN.
+ *
+ * Measured in production: `assign_confirm` is NOT idempotent — two identical
+ * calls created tasks 947 and 948. So a failure that happens after the request
+ * left (timeout, socket error, DNS, abort) may sit on either side of the
+ * server's commit, and a blind retry is how a duplicate lands in a panel that
+ * has no undo.
+ */
+const AMBIGUOUS_CREATE_WARNING = "The task MAY have been created: the request failed before PAUL's answer " +
+    "could be read, so the outcome is UNKNOWN. assign_confirm does NOT " +
+    "de-duplicate — two identical calls create two tasks (verified in " +
+    "production). Do NOT retry blindly: verify first with paul_tasks (or " +
+    "paul_admin_tasks for another person's list) and only create it again if " +
+    "the task is not there.";
+/** The same warning, condensed for the tool descriptions. */
+const AMBIGUOUS_CREATE_HINT = "If this fails with outcome 'unknown' the task MAY already exist: " +
+    "assign_confirm does not de-duplicate, so verify with paul_tasks (or " +
+    "paul_admin_tasks) BEFORE retrying.";
+/**
+ * Converts a failed create into a tool result, distinguishing the ONE thing
+ * that matters: did the server answer?
+ *
+ * A PaulApiError carries an HTTP status, so PAUL answered and the outcome is
+ * deterministic — report it verbatim. Anything else is a transport-level
+ * failure with no status at all, and the create may or may not have committed.
+ */
+function createFailureResult(err) {
+    if (err instanceof PaulApiError)
+        return errorResult(err);
+    return textResult({
+        error: true,
+        outcome: "unknown",
+        message: err instanceof Error ? err.message : String(err),
+        warning: AMBIGUOUS_CREATE_WARNING,
+    }, true);
+}
 /**
  * Creates a task for `personUid` through `assign_confirm`.
  *
@@ -34,7 +72,15 @@ export async function assignTask(client, input) {
     return {
         ok: res.ok === true,
         ...(taskId !== undefined ? { taskId } : {}),
-        ...(res.queued ? { queued: true } : {}),
+        ...(res.queued
+            ? {
+                queued: true,
+                note: "PAUL did NOT create the task: the autopilot is off for that " +
+                    "person's department, so only a proposal was queued for an admin " +
+                    "to confirm in the panel. There is no taskId and the work is NOT " +
+                    "assigned yet — do not tell the user it was assigned.",
+            }
+            : {}),
         paulReply: res.reply ?? null,
         ...(res.message ? { message: res.message } : {}),
     };
@@ -55,7 +101,12 @@ export function registerRegisterTaskTool(server, client) {
         title: "Register a new task for yourself in PAUL",
         description: "Create a NEW task in your OWN list in PAUL. One direct API call — no " +
             "chat, no AI budget spent, and the response carries the new taskId. " +
-            "Returns { ok: true, taskId, paulReply }. Titles may contain any words " +
+            "Returns { ok: true, taskId, paulReply }. IMPORTANT: { queued: true } " +
+            "means the autopilot is off for your department, so PAUL did NOT " +
+            "create the task — it queued a proposal for an admin to confirm in the " +
+            "panel; there is no taskId and the work is not registered yet. " +
+            AMBIGUOUS_CREATE_HINT +
+            " Titles may contain any words " +
             "(an earlier version rejected titles holding 'alta', 'media', 'baja', " +
             "'normal' or 'regular'; that restriction is gone). Keep titles short, " +
             "concrete and action-oriented. To create a task for SOMEONE ELSE use " +
@@ -69,15 +120,24 @@ export function registerRegisterTaskTool(server, client) {
             client: z.string().optional().describe("Client name this task belongs to, if any"),
         },
     }, async ({ title, urgency, estMin, client: clientName }) => {
+        // Resolving the uid is a separate try: a failure there happens BEFORE
+        // any create is attempted, so it is unambiguous and must not carry the
+        // "the task may already exist" warning.
+        let uid;
         try {
-            const uid = await client.currentUid();
-            if (!uid) {
-                return textResult({
-                    ok: false,
-                    error: "PAUL did not report your uid on login, so the task cannot be " +
-                        "addressed. Use paul_people to find it and paul_assign_task with it.",
-                }, true);
-            }
+            uid = await client.currentUid();
+        }
+        catch (err) {
+            return errorResult(err);
+        }
+        if (!uid) {
+            return textResult({
+                ok: false,
+                error: "PAUL did not report your uid on login, so the task cannot be " +
+                    "addressed. Use paul_people to find it and paul_assign_task with it.",
+            }, true);
+        }
+        try {
             const result = await assignTask(client, {
                 title,
                 urgency,
@@ -88,7 +148,7 @@ export function registerRegisterTaskTool(server, client) {
             return textResult(result, !result.ok);
         }
         catch (err) {
-            return errorResult(err);
+            return createFailureResult(err);
         }
     });
 }
@@ -103,7 +163,9 @@ export function registerAssignTaskTool(server, client) {
             "taskId, paulReply }. IMPORTANT: { queued: true } means the autopilot " +
             "is off for that person's department, so PAUL did NOT assign the task " +
             "— it queued a proposal for an admin to confirm in the panel; do not " +
-            "tell the user the work was assigned in that case. Use " +
+            "tell the user the work was assigned in that case. " +
+            AMBIGUOUS_CREATE_HINT +
+            " Use " +
             "paul_undo_assignment with the returned taskId to revert a mistake, " +
             "but only right away: the server closes the undo window quickly. " +
             "To hand over a task that ALREADY exists, use paul_task_action with " +
@@ -132,7 +194,7 @@ export function registerAssignTaskTool(server, client) {
             return textResult(result, !result.ok);
         }
         catch (err) {
-            return errorResult(err);
+            return createFailureResult(err);
         }
     });
 }

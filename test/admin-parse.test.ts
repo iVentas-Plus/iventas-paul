@@ -15,6 +15,7 @@ import {
   parseSelectOptions,
   stripTags,
   isAdminLoginPage,
+  decodeEntities,
 } from "../src/admin-parse.js";
 
 /** admin/redflags.php — the weekly count is glyphs, the historic one is a digit. */
@@ -271,6 +272,34 @@ describe("parseSelectOptions", () => {
 
   it("returns an empty list when the select is absent", () => {
     expect(parseSelectOptions(USER_SELECT_HTML, "nope")).toEqual([]);
+  });
+});
+
+describe("decodeEntities", () => {
+  it("decodes a decimal numeric entity", () => {
+    expect(decodeEntities("Garc&#237;a")).toBe("García");
+  });
+
+  it("decodes a hexadecimal numeric entity", () => {
+    expect(decodeEntities("Garc&#xED;a")).toBe("García");
+  });
+
+  it("leaves an out-of-range decimal entity untouched instead of throwing", () => {
+    // U+110000 is one past the last legal code point.
+    expect(decodeEntities("a&#1114112;b")).toBe("a&#1114112;b");
+    expect(decodeEntities("&#99999999999999999999999;")).toBe(
+      "&#99999999999999999999999;",
+    );
+  });
+
+  it("leaves an out-of-range hex entity untouched instead of throwing", () => {
+    expect(decodeEntities("a&#x110000;b")).toBe("a&#x110000;b");
+    expect(decodeEntities("&#XFFFFFFFFFF;")).toBe("&#XFFFFFFFFFF;");
+  });
+
+  it("keeps parsing the rest of a page that contains a bad entity", () => {
+    const html = `<table><tr><td>&#1114112;</td><td>Aleks Garc&iacute;a</td></tr></table>`;
+    expect(parseTables(html)[0].rows).toEqual([["&#1114112;", "Aleks García"]]);
   });
 });
 

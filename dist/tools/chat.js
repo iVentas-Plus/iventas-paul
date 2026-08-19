@@ -8,11 +8,15 @@ export function registerChatTool(server, client) {
             "needs at least 2 open tasks (with only one, PAUL replies there is " +
             "nothing to skip to) and settles the current task's clock while it " +
             "moves down; (2) register a task conversationally — but prefer " +
-            "paul_register_task, which verifies creation; (3) ask questions about " +
+            "paul_register_task: it is a single direct call that returns the new " +
+            "task id, spending no AI budget and leaving no chat reply to parse; " +
+            "(3) ask questions about " +
             "the team or teach PAUL knowledge, or recover when another tool's flow " +
-            "did not converge. It CANNOT truly pause a task: the wait/pause " +
-            "endpoints are not exposed by this MCP, so never claim work was paused " +
-            "in PAUL based on a chat reply. Write messages in Spanish for best " +
+            "did not converge. Do NOT use chat to pause or park a task: " +
+            "paul_task_action does that for real (action 'pause' to freeze the " +
+            "clock, action 'review' to send it to human review), so never claim " +
+            "work was paused in PAUL based on a chat reply. " +
+            "Write messages in Spanish for best " +
             "results — PAUL replies in Spanish. Do NOT use this to close tasks " +
             "(use the checkpoint tools). If PAUL's AI spend cap is exhausted the " +
             "reply is a canned non-AI message saying so; the rest of the tools " +

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { vi } from "vitest";
 import { PaulClient, PaulApiError, configFromEnv } from "../src/client.js";
+import { PaulSession } from "../src/session.js";
 import { jsonResponse, mockFetchSequence, callInfo, TEST_ENV } from "./helpers.js";
 
 const LOGIN_OK = { ok: true, user: { uid: "u1", name: "Diego", role: "dev" } };
@@ -126,6 +127,71 @@ describe("PaulClient auth", () => {
     expect(err).toBeInstanceOf(PaulApiError);
     expect((err as PaulApiError).status).toBe(409);
     expect((err as PaulApiError).body).toMatchObject({ error: "order" });
+  });
+});
+
+describe("PaulClient.currentUid", () => {
+  it("logs in when the uid is unknown, even though the session already has a cookie", async () => {
+    // Reproduces the production failure: the ADMIN plane logged in first, so
+    // the shared IVCOACH cookie is present while api.php was never
+    // authenticated and no uid was ever reported. Keying the lazy login on the
+    // cookie made currentUid() return null and paul_register_task claim "PAUL
+    // did not report your uid on login".
+    const mock = mockFetchSequence([
+      new Response("", {
+        status: 302,
+        headers: { location: "hoy.php", "set-cookie": "IVCOACH=shared; path=/" },
+      }),
+      jsonResponse(LOGIN_OK),
+    ]);
+    const session = new PaulSession();
+    await session.fetch("https://paul.example.com/iventas-coach/admin/hoy.php", {
+      method: "POST",
+    });
+    expect(session.hasCookie()).toBe(true);
+
+    const client = new PaulClient(configFromEnv({ ...TEST_ENV }), undefined, session);
+
+    expect(await client.currentUid()).toBe("u1");
+    expect(mock).toHaveBeenCalledTimes(2);
+    expect(callInfo(mock, 1).url).toContain("action=login");
+  });
+
+  it("logs in only once when the uid is already known", async () => {
+    const mock = mockFetchSequence([jsonResponse(LOGIN_OK, { cookie: "IVCOACH=a" })]);
+    const client = makeClient();
+
+    expect(await client.currentUid()).toBe("u1");
+    expect(await client.currentUid()).toBe("u1");
+    expect(mock).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns null without looping when PAUL logs in but reports no uid", async () => {
+    const mock = mockFetchSequence([
+      jsonResponse({ ok: true, user: { name: "Sin uid", role: "dev" } }, { cookie: "IVCOACH=a" }),
+    ]);
+    const client = makeClient();
+
+    expect(await client.currentUid()).toBeNull();
+    expect(mock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("PaulClient.confirmNotified", () => {
+  it("posts { id } to action=confirm_notified", async () => {
+    const mock = mockFetchSequence([
+      jsonResponse(LOGIN_OK, { cookie: "IVCOACH=a" }),
+      jsonResponse({ ok: true }),
+    ]);
+    const client = makeClient();
+
+    const res = await client.confirmNotified(41);
+
+    expect(res.ok).toBe(true);
+    const call = callInfo(mock, 1);
+    expect(call.url).toContain("action=confirm_notified");
+    expect(call.method).toBe("POST");
+    expect(call.body).toEqual({ id: 41 });
   });
 });
 

@@ -214,3 +214,199 @@ describe("ADMIN_PAGES", () => {
     expect(ADMIN_PAGES).toContain("settings");
   });
 });
+
+/* ---------- task board scoping (?u=) and merge-on-update ---------- */
+
+/** One mission card exactly as admin/tasks.php renders it, with every field set. */
+const TASK_CARD = `<h2>Misiones</h2>
+<div class="adm-task" data-id="698">
+  <form>
+    <input name="title" value="Indexar Client">
+    <input name="type" value="asignada">
+    <input name="est_min" value="45">
+    <select name="priority"><option value="1" selected>alta</option><option value="2">media</option></select>
+    <textarea name="context">CTX-PRUEBA</textarea>
+    <span class="pill">pendiente</span>
+  </form>
+</div>`;
+
+/** Body of a form POST parsed back into a plain object. */
+function fieldsOf(mock: ReturnType<typeof mockFetchSequence>, index: number): Record<string, string> {
+  return Object.fromEntries(new URLSearchParams(bodyOf(mock, index)));
+}
+
+describe("PaulAdminClient task board scoping", () => {
+  it("addTask posts to tasks.php?u=<assignee> and re-reads THAT board", async () => {
+    const mock = mockFetchSequence([redirect(), redirect(), htmlResponse(TASK_CARD)]);
+
+    await makeAdmin().addTask({ userUid: "arturo", title: "Nueva misión" });
+
+    // Without the query string the panel scopes the POST to whichever
+    // collaborator comes first alphabetically, not the assignee.
+    expect(urlOf(mock, 1)).toBe(
+      "https://paul.example.com/iventas-coach/admin/tasks.php?u=arturo",
+    );
+    expect(urlOf(mock, 2)).toBe(
+      "https://paul.example.com/iventas-coach/admin/tasks.php?u=arturo",
+    );
+  });
+
+  it("deleteTask carries ?u= when the collaborator is known, and omits it otherwise", async () => {
+    const withUid = mockFetchSequence([redirect(), redirect(), htmlResponse(TASK_CARD)]);
+    await makeAdmin().deleteTask(875, "arturo");
+    expect(urlOf(withUid, 1)).toContain("tasks.php?u=arturo");
+    vi.unstubAllGlobals();
+
+    const without = mockFetchSequence([redirect(), redirect(), htmlResponse(TASK_CARD)]);
+    await makeAdmin().deleteTask(875);
+    expect(urlOf(without, 1)).toBe("https://paul.example.com/iventas-coach/admin/tasks.php");
+  });
+
+  it("completeTask carries ?u= when given", async () => {
+    const mock = mockFetchSequence([redirect(), redirect(), htmlResponse(TASK_CARD)]);
+
+    await makeAdmin().completeTask(698, "arturo");
+
+    expect(urlOf(mock, 1)).toContain("tasks.php?u=arturo");
+  });
+});
+
+describe("PaulAdminClient.updateTask", () => {
+  it("a title-only edit preserves type, estMin, priority and context", async () => {
+    const mock = mockFetchSequence([
+      redirect(), // login
+      htmlResponse(TASK_CARD), // GET the board to read the stored row
+      redirect(), // POST
+      htmlResponse(TASK_CARD), // post/redirect/get
+    ]);
+
+    await makeAdmin().updateTask({ id: 698, userUid: "arturo", title: "Otro título" });
+
+    expect(urlOf(mock, 1)).toContain("tasks.php?u=arturo");
+    expect(fieldsOf(mock, 2)).toEqual({
+      _form: "update_task",
+      id: "698",
+      title: "Otro título",
+      type: "asignada",
+      est_min: "45",
+      priority: "1",
+      context: "CTX-PRUEBA",
+    });
+    expect(urlOf(mock, 2)).toContain("tasks.php?u=arturo");
+  });
+
+  it("an explicit empty string clears the field instead of being ignored", async () => {
+    const mock = mockFetchSequence([
+      redirect(),
+      htmlResponse(TASK_CARD),
+      redirect(),
+      htmlResponse(TASK_CARD),
+    ]);
+
+    await makeAdmin().updateTask({ id: 698, userUid: "arturo", context: "" });
+
+    const sent = fieldsOf(mock, 2);
+    expect(sent.context).toBe("");
+    expect(sent.title).toBe("Indexar Client");
+  });
+
+  it("refuses without POSTing when the id is not on that collaborator's board", async () => {
+    const mock = mockFetchSequence([redirect(), htmlResponse(TASK_CARD)]);
+    const admin = makeAdmin();
+
+    await expect(admin.updateTask({ id: 999, userUid: "arturo", title: "x" })).rejects.toThrow(
+      /nothing was changed/i,
+    );
+    // Only the login and the board read happened: no form was posted.
+    expect(mock.mock.calls).toHaveLength(2);
+  });
+
+  it("names userUid as the likely mistake when the task is missing", async () => {
+    mockFetchSequence([redirect(), htmlResponse(TASK_CARD)]);
+
+    await expect(
+      makeAdmin().updateTask({ id: 999, userUid: "arturo", title: "x" }),
+    ).rejects.toThrow(/userUid/);
+  });
+});
+
+describe("PaulAdminClient.submit failures", () => {
+  it("raises the status when the panel answers a non-OK page that is not the login form", async () => {
+    mockFetchSequence([redirect(), htmlResponse("<h1>Server Error</h1>", 500)]);
+
+    await expect(makeAdmin().deleteTask(1)).rejects.toThrow(/answered 500/);
+  });
+});
+
+describe("PaulAdminClient.page redirects", () => {
+  it("refuses to treat an unexpected 302 as an empty page", async () => {
+    mockFetchSequence([redirect(), redirect("login.php")]);
+
+    await expect(makeAdmin().page("tasks", { u: "arturo" })).rejects.toThrow(PaulAdminError);
+  });
+});
+
+describe("PaulAdminClient.url validation", () => {
+  it("rejects a page name that would escape the admin directory", async () => {
+    mockFetchSequence([]);
+
+    await expect(makeAdmin().page("../../wp-config")).rejects.toThrow(PaulAdminError);
+  });
+
+  it("rejects a page name carrying its own query string", async () => {
+    mockFetchSequence([]);
+
+    await expect(makeAdmin().page("tasks.php?u=x")).rejects.toThrow(PaulAdminError);
+  });
+
+  it("keeps every real admin page working", async () => {
+    for (const page of ADMIN_PAGES) {
+      const mock = mockFetchSequence([redirect(), htmlResponse(DASHBOARD)]);
+      await expect(makeAdmin().page(page)).resolves.toBe(DASHBOARD);
+      expect(urlOf(mock, 1)).toBe(
+        `https://paul.example.com/iventas-coach/admin/${page}.php`,
+      );
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("PaulAdminClient.withViewAs cleanup", () => {
+  it("propagates the body's error even when leaving the view also fails", async () => {
+    const mock = mockFetchSequence([
+      redirect(), // login
+      redirect(), // view_as
+      new Error("view_self never answered"), // leaving the view fails too
+    ]);
+    const admin = makeAdmin();
+
+    await expect(
+      admin.withViewAs("david", async () => {
+        throw new Error("the real failure");
+      }),
+    ).rejects.toThrow("the real failure");
+
+    // The view is still left: the session must never stay read-only.
+    expect(urlOf(mock, 2)).toContain("view_self.php");
+  });
+
+  it("surfaces a failure to leave the view when the body succeeded", async () => {
+    mockFetchSequence([redirect(), redirect(), htmlResponse("boom", 500)]);
+
+    await expect(makeAdmin().withViewAs("david", async () => "ok")).rejects.toThrow();
+  });
+});
+
+describe("PaulAdminClient.ask session handling", () => {
+  it("says the admin session expired when the copilot answers the login form", async () => {
+    mockFetchSequence([redirect(), htmlResponse(LOGIN_FORM)]);
+
+    await expect(makeAdmin().ask("¿quién va retrasado?")).rejects.toThrow(/session expired/i);
+  });
+
+  it("reports the status when the copilot answers a non-OK response", async () => {
+    mockFetchSequence([redirect(), htmlResponse("nope", 503)]);
+
+    await expect(makeAdmin().ask("algo")).rejects.toThrow(/503/);
+  });
+});

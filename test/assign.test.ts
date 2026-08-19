@@ -97,6 +97,23 @@ describe("assignTask", () => {
     expect(res.ok).toBe(true);
   });
 
+  it("adds an explicit note when PAUL only QUEUED the proposal", async () => {
+    mockFetchSequence([
+      jsonResponse(LOGIN_OK, { cookie: "IVCOACH=a" }),
+      jsonResponse({ ok: true, reply: "La dejé en la cola.", queued: true }),
+    ]);
+
+    const res = await assignTask(makeClient(), {
+      title: "Revisar cartera",
+      urgency: "media",
+      personUid: "alice",
+    });
+
+    expect(res.queued).toBe(true);
+    expect(res.note).toMatch(/NOT assigned/i);
+    expect(res.note).toMatch(/admin/i);
+  });
+
   it("reports ok:false when PAUL refuses, keeping its message", async () => {
     mockFetchSequence([
       jsonResponse(LOGIN_OK, { cookie: "IVCOACH=a" }),
@@ -195,6 +212,68 @@ describe("paul_assign_task", () => {
     expect(res.isError).toBe(true);
     const payload = JSON.parse(res.content[0].text) as { status: number };
     expect(payload.status).toBe(500);
+  });
+});
+
+describe("ambiguous create failures", () => {
+  // Measured in production: assign_confirm is NOT idempotent — two identical
+  // calls created tasks 947 and 948. So a failure with no HTTP status (the
+  // server never answered) leaves the outcome UNKNOWN, and a blind retry is
+  // how a duplicate lands in a panel that has no undo.
+  const AMBIGUOUS = /may (already )?have been created/i;
+
+  it("warns that paul_assign_task may have created the task on a transport failure", async () => {
+    mockFetchSequence([
+      jsonResponse(LOGIN_OK, { cookie: "IVCOACH=a" }),
+      new TypeError("fetch failed"),
+    ]);
+    const handler = captureToolHandler(registerAssignTaskTool, makeClient());
+
+    const res = await handler({ title: "Algo", personUid: "david", urgency: "alta" });
+
+    expect(res.isError).toBe(true);
+    const text = res.content[0].text;
+    expect(text).toMatch(AMBIGUOUS);
+    expect(text).toMatch(/de-duplicate/i);
+    expect(text).toContain("paul_tasks");
+    expect(text).toContain("paul_admin_tasks");
+  });
+
+  it("warns the same way from paul_register_task", async () => {
+    mockFetchSequence([
+      jsonResponse(LOGIN_OK, { cookie: "IVCOACH=a" }),
+      new TypeError("fetch failed"),
+    ]);
+    const handler = captureToolHandler(registerRegisterTaskTool, makeClient());
+
+    const res = await handler({ title: "Algo", urgency: "alta" });
+
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toMatch(AMBIGUOUS);
+  });
+
+  it("does NOT warn when the server answered: the outcome is deterministic", async () => {
+    mockFetchSequence([
+      jsonResponse(LOGIN_OK, { cookie: "IVCOACH=a" }),
+      jsonResponse({ error: "server", message: "boom" }, { status: 500 }),
+    ]);
+    const handler = captureToolHandler(registerAssignTaskTool, makeClient());
+
+    const res = await handler({ title: "Algo", personUid: "david", urgency: "baja" });
+
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).not.toMatch(AMBIGUOUS);
+    expect(JSON.parse(res.content[0].text).status).toBe(500);
+  });
+
+  it("does not claim ambiguity when the LOGIN itself failed — nothing was created", async () => {
+    mockFetchSequence([new TypeError("fetch failed")]);
+    const handler = captureToolHandler(registerRegisterTaskTool, makeClient());
+
+    const res = await handler({ title: "Algo", urgency: "alta" });
+
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).not.toMatch(AMBIGUOUS);
   });
 });
 
