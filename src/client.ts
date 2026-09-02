@@ -8,30 +8,35 @@
  */
 
 export interface PaulConfig {
-  /** Base URL up to the app folder, e.g. https://example.com/iventas-coach */
+  /** Base URL up to the app folder. Defaults to the production PAUL app. */
   url: string;
   email: string;
   password: string;
 }
 
+export const DEFAULT_PAUL_URL = "https://iventas.cc/iventas-coach";
+
+function processEnv(): Record<string, string | undefined> {
+  // SAFETY: this package runs only as a Node.js MCP server, where globalThis.process.env exists.
+  return (globalThis as unknown as { process: { env: Record<string, string | undefined> } })
+    .process.env;
+}
+
 /** Reads and validates configuration from environment variables. */
-export function configFromEnv(
-  env: Record<string, string | undefined> = process.env,
-): PaulConfig {
+export function configFromEnv(env: Record<string, string | undefined> = processEnv()): PaulConfig {
   const missing: string[] = [];
-  if (!env.PAUL_URL) missing.push("PAUL_URL");
   if (!env.PAUL_EMAIL) missing.push("PAUL_EMAIL");
   if (!env.PAUL_PASSWORD) missing.push("PAUL_PASSWORD");
   if (missing.length > 0) {
     throw new Error(
       `Missing required environment variables: ${missing.join(", ")}. ` +
-        "Set PAUL_URL (base URL of the PAUL app up to its folder, e.g. " +
-        "https://example.com/iventas-coach), PAUL_EMAIL and PAUL_PASSWORD " +
-        "(the collaborator's login credentials).",
+        "Set PAUL_EMAIL and PAUL_PASSWORD (the collaborator's login credentials). " +
+        "PAUL_URL is optional and defaults to https://iventas.cc/iventas-coach.",
     );
   }
+  const rawUrl = env.PAUL_URL?.trim() || DEFAULT_PAUL_URL;
   return {
-    url: (env.PAUL_URL as string).replace(/\/+$/, ""),
+    url: rawUrl.replace(/\/+$/, ""),
     email: env.PAUL_EMAIL as string,
     password: env.PAUL_PASSWORD as string,
   };
