@@ -84,7 +84,8 @@ async function runAction(client, action, id, personUid, urgency, reason) {
             return (await client.reqStatus(id, "descartada", reason));
     }
 }
-export function registerRequestsTools(server, client) {
+/** Registers the queue listing. */
+function registerRequestsListTool(server, client) {
     server.registerTool("paul_requests", {
         title: "List PAUL's team request queue (Peticiones)",
         description: "List PAUL's 'Peticiones' queue: the ONE place the team files bugs, " +
@@ -129,6 +130,9 @@ export function registerRequestsTools(server, client) {
             return errorResult(err);
         }
     });
+}
+/** Registers the tool that files a new request. */
+function registerCreateRequestTool(server, client) {
     server.registerTool("paul_create_request", {
         title: "File a request in PAUL (Peticiones)",
         description: "File a request in PAUL's team queue. This is the CURRENT way to ask " +
@@ -232,6 +236,9 @@ export function registerRequestsTools(server, client) {
             return errorResult(err);
         }
     });
+}
+/** Registers the tool that reads one request's thread. */
+function registerRequestThreadTool(server, client) {
     server.registerTool("paul_request_thread", {
         title: "Read a request's discussion thread",
         description: "Read one request from paul_requests plus its whole comment thread. " +
@@ -263,6 +270,9 @@ export function registerRequestsTools(server, client) {
             return errorResult(err);
         }
     });
+}
+/** Registers the tool that answers in a thread. */
+function registerCommentRequestTool(server, client) {
     server.registerTool("paul_comment_request", {
         title: "Comment on a request's thread",
         description: "Post a comment on a request's thread. Anyone may comment, on any " +
@@ -312,6 +322,9 @@ export function registerRequestsTools(server, client) {
             return errorResult(err);
         }
     });
+}
+/** Registers the tool that moves a request along the queue. */
+function registerRequestActionTool(server, client) {
     server.registerTool("paul_request_action", {
         title: "Take, assign, close or discard a request",
         description: "Move a request through its lifecycle. Actions: 'take' claims a `nueva` " +
@@ -358,4 +371,18 @@ export function registerRequestsTools(server, client) {
             return errorResult(err);
         }
     });
+}
+/**
+ * Registers every tool over PAUL's Peticiones queue.
+ *
+ * One function per tool: the registrations are long because each
+ * description IS the contract the calling agent reads, and a single
+ * function holding all five was past the size anyone can review.
+ */
+export function registerRequestsTools(server, client) {
+    registerRequestsListTool(server, client);
+    registerCreateRequestTool(server, client);
+    registerRequestThreadTool(server, client);
+    registerCommentRequestTool(server, client);
+    registerRequestActionTool(server, client);
 }
