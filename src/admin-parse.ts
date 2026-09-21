@@ -77,9 +77,6 @@ function cellText(html: string): string {
   return stripTags(html).replace(/\s+/g, " ").trim();
 }
 
-/** Every `<div>` / `</div>` tag, used to walk nesting depth. */
-const DIV_TAG_RE = /<(\/?)div\b[^>]*>/gi;
-
 /**
  * The body of a `<div>` whose opening tag ends at `from`, delimited by the
  * `</div>` that actually closes it rather than by the first one encountered.
@@ -95,10 +92,14 @@ const DIV_TAG_RE = /<(\/?)div\b[^>]*>/gi;
  * yields a bounded fragment instead of the whole document.
  */
 function divBody(html: string, from: number): string {
-  DIV_TAG_RE.lastIndex = from;
+  // Built per call on purpose: a shared /g regex carries `lastIndex` between
+  // calls, and the callers here already drive their own /g scans. One regex
+  // per tile is nothing next to a parser that could silently mis-slice a card.
+  const tagRe = /<(\/?)div\b[^>]*>/gi;
+  tagRe.lastIndex = from;
   let depth = 1;
   let tag: RegExpExecArray | null;
-  while ((tag = DIV_TAG_RE.exec(html)) !== null) {
+  while ((tag = tagRe.exec(html)) !== null) {
     depth += tag[1] === "/" ? -1 : 1;
     if (depth === 0) return html.slice(from, tag.index);
   }
