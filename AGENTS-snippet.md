@@ -70,6 +70,13 @@ This project tracks work in PAUL (iVentas COACH) through the paul_* MCP tools.
 - The paul_admin_* tools work only for accounts with the administrator role,
   and their writes hit a live panel with no undo. Never run one the user did
   not ask for, and ask for confirmation immediately before EACH mutation,
-  naming the tool, the exact target (task id or uid) and what becomes
-  irreversible. Confirming one mutation does not authorise the next.
+  naming the tool, what becomes irreversible, and the exact target: the `id`
+  or `uid` of an existing row; the values being written and where they land
+  when creating one, since there is no id yet; and for `paul_admin_action`
+  the page, the form (`_form` value or the bare field the page keys off) and
+  every field being posted, because the panel saves whatever the form carries
+  and an omitted field can blank a stored value. Confirming one mutation does
+  not authorise the next.
+- `paul_notifications` returns `requestId: null` when a notification points at
+  no thread. Only call `paul_request_thread` for the ones carrying a number.
 ```
