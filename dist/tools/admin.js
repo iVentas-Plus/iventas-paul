@@ -1,6 +1,6 @@
 import { registerAdminStatusTool, registerAdminTasksTool, registerAdminPageTool, registerAdminAskTool, } from "./admin-read.js";
 import { registerAdminTaskWriteTool, registerAdminPeopleTool, registerAdminActionTool, } from "./admin-write.js";
-export { registerAdminStatusTool, registerAdminTasksTool, registerAdminPageTool, registerAdminAskTool, MAX_TEXT_CHARS, truncateText, } from "./admin-read.js";
+export { registerAdminStatusTool, registerAdminTasksTool, registerAdminPageTool, registerAdminAskTool, MAX_TEXT_CHARS, MAX_SWEEP_PEOPLE, SWEEP_CONCURRENCY, truncateText, } from "./admin-read.js";
 export { registerAdminTaskWriteTool, registerAdminPeopleTool, registerAdminActionTool, } from "./admin-write.js";
 /** Registers every admin-panel tool on the MCP server. */
 export function registerAdminTools(server, admin) {

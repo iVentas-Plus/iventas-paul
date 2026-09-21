@@ -1,5 +1,6 @@
 import { vi, type Mock } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { z } from "zod";
 import type { ToolResult } from "../src/tools/shared.js";
 
 /** Builds a JSON Response, optionally with a Set-Cookie header. */
@@ -67,6 +68,36 @@ export function captureToolHandler<C>(
   register(server, client);
   if (handler === undefined) throw new Error("register did not install a tool handler");
   return handler as (args: Record<string, unknown>) => Promise<ToolResult>;
+}
+
+export type ToolHandler = (args: Record<string, unknown>) => Promise<ToolResult>;
+
+/**
+ * Picks ONE tool out of a register*Tools() function that installs several.
+ *
+ * captureToolHandler keeps whichever handler was registered last, so a module
+ * that installs three tools needs every other registration filtered out first.
+ * The tool's `inputSchema` comes back with it, so a test can assert the zod
+ * limits the tool advertises without re-deriving them.
+ */
+export function namedTool<C>(
+  register: (server: McpServer, client: C) => void,
+  client: C,
+  name: string,
+): { handler: ToolHandler; input: Record<string, z.ZodTypeAny> } {
+  type Registrar = { registerTool: (n: string, c: unknown, h: unknown) => void };
+  let input: Record<string, z.ZodTypeAny> = {};
+  const handler = captureToolHandler((server: McpServer, c: C) => {
+    const only: Registrar = {
+      registerTool: (n, config, h) => {
+        if (n !== name) return;
+        input = (config as { inputSchema?: Record<string, z.ZodTypeAny> }).inputSchema ?? {};
+        (server as unknown as Registrar).registerTool(n, config, h);
+      },
+    };
+    register(only as unknown as McpServer, c);
+  }, client);
+  return { handler, input };
 }
 
 export const TEST_ENV = {

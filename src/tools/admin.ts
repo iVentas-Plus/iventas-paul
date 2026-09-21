@@ -33,6 +33,8 @@ export {
   registerAdminPageTool,
   registerAdminAskTool,
   MAX_TEXT_CHARS,
+  MAX_SWEEP_PEOPLE,
+  SWEEP_CONCURRENCY,
   truncateText,
 } from "./admin-read.js";
 export type { TruncatedText, BoardSweep } from "./admin-read.js";

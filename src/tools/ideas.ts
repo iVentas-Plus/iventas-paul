@@ -19,6 +19,25 @@ function summarize(idea: Idea) {
   };
 }
 
+/**
+ * The idea we just posted, among every row carrying the same text.
+ *
+ * The board is not deduplicated, so an identical idea filed months ago is a
+ * perfectly ordinary state. Returning the FIRST match reported that old row's
+ * id as the confirmation of a brand-new post, and the caller then upvoted,
+ * quoted or linked somebody else's idea — with `confirmed: true` to back it
+ * up. Ids are assigned in ascending order, so the highest one is ours.
+ */
+function newestMatch(ideas: Idea[], text: string): Idea | null {
+  const wanted = text.trim();
+  let best: Idea | null = null;
+  for (const idea of ideas) {
+    if ((idea.text ?? "").trim() !== wanted) continue;
+    if (best === null || idea.id > best.id) best = idea;
+  }
+  return best;
+}
+
 export function registerIdeasTools(server: McpServer, client: PaulClient): void {
   server.registerTool(
     "paul_ideas",
@@ -75,7 +94,9 @@ export function registerIdeasTools(server: McpServer, client: PaulClient): void 
         "reports `confirmed: true` when the idea is visible there (with its new " +
         "id) or `confirmed: false` when it is not — false means the post could " +
         "not be verified, NOT necessarily that it failed; read paul_ideas " +
-        "before posting again to avoid a duplicate.",
+        "before posting again to avoid a duplicate. The board does not " +
+        "de-duplicate: when several rows carry the same text, the one reported " +
+        "is the highest id, which is the one just created.",
       inputSchema: {
         text: z
           .string()
@@ -90,9 +111,7 @@ export function registerIdeasTools(server: McpServer, client: PaulClient): void 
         let confirmed = false;
         let idea: ReturnType<typeof summarize> | null = null;
         try {
-          const found = ideasOf(await client.ideasList()).find(
-            (i) => (i.text ?? "").trim() === text.trim(),
-          );
+          const found = newestMatch(ideasOf(await client.ideasList()), text);
           if (found) {
             confirmed = true;
             idea = summarize(found);

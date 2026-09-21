@@ -1,45 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { z } from "zod";
 import { PaulClient, configFromEnv } from "../src/client.js";
 import { registerIdeasTools } from "../src/tools/ideas.js";
-import type { ToolResult } from "../src/tools/shared.js";
-import {
-  jsonResponse,
-  mockFetchSequence,
-  callInfo,
-  captureToolHandler,
-  TEST_ENV,
-} from "./helpers.js";
+import { jsonResponse, mockFetchSequence, callInfo, namedTool, TEST_ENV } from "./helpers.js";
 
 const LOGIN_OK = { ok: true, user: { uid: "u1", name: "Diego", role: "dev" } };
-
-type Handler = (args: Record<string, unknown>) => Promise<ToolResult>;
-type Registrar = { registerTool: (n: string, c: unknown, h: unknown) => void };
 
 function makeClient(): PaulClient {
   return new PaulClient(configFromEnv({ ...TEST_ENV }));
 }
 
-/**
- * registerIdeasTools installs three tools and captureToolHandler keeps only
- * the last one, so every registration but the requested name is filtered out
- * before it reaches the capturing server. The inputSchema is returned too, so
- * the zod limits can be asserted directly.
- */
-function tool(name: string): { handler: Handler; input: Record<string, z.ZodTypeAny> } {
-  let input: Record<string, z.ZodTypeAny> = {};
-  const handler = captureToolHandler((server: McpServer, client: PaulClient) => {
-    const only: Registrar = {
-      registerTool: (n, config, h) => {
-        if (n !== name) return;
-        input = (config as { inputSchema?: Record<string, z.ZodTypeAny> }).inputSchema ?? {};
-        (server as unknown as Registrar).registerTool(n, config, h);
-      },
-    };
-    registerIdeasTools(only as unknown as McpServer, client);
-  }, makeClient());
-  return { handler, input };
+/** One of the three tools registerIdeasTools installs, by name. */
+function tool(name: string) {
+  return namedTool(registerIdeasTools, makeClient(), name);
 }
 
 afterEach(() => {
@@ -168,6 +140,46 @@ describe("paul_create_idea", () => {
     expect(callInfo(mock, 1).url).toContain("action=idea_create");
     expect(callInfo(mock, 1).body).toEqual({ text: "Modo oscuro para PAUL" });
     expect(callInfo(mock, 2).url).toContain("action=ideas_list");
+  });
+
+  it("confirms the NEWEST match when an idea with the same text already existed", async () => {
+    // Taking the first match reported the OLD idea's id: the caller then
+    // upvoted, linked or quoted somebody else's row, convinced it was the one
+    // it had just filed. Ids grow, so the newest match is the one just posted.
+    mockFetchSequence([
+      jsonResponse(LOGIN_OK, { cookie: "IVCOACH=a" }),
+      jsonResponse({ ok: true }),
+      jsonResponse({
+        ideas: [
+          { id: 3, text: "Modo oscuro para PAUL", who: "Ana", votes: 9, voted: false, status: "descartada" },
+          { id: 41, text: "Modo oscuro para PAUL", who: "Diego", votes: 0, voted: true, status: "abierta" },
+        ],
+      }),
+    ]);
+
+    const res = await tool("paul_create_idea").handler({ text: "Modo oscuro para PAUL" });
+
+    const payload = JSON.parse(res.content[0].text) as Record<string, any>;
+    expect(payload.confirmed).toBe(true);
+    expect(payload.idea.id).toBe(41);
+    expect(payload.idea.status).toBe("abierta");
+  });
+
+  it("picks the newest match regardless of the order the board returns", async () => {
+    mockFetchSequence([
+      jsonResponse(LOGIN_OK, { cookie: "IVCOACH=a" }),
+      jsonResponse({ ok: true }),
+      jsonResponse({
+        ideas: [
+          { id: 41, text: "Modo oscuro para PAUL", who: "Diego", votes: 0, voted: true, status: "abierta" },
+          { id: 3, text: "Modo oscuro para PAUL", who: "Ana", votes: 9, voted: false, status: "descartada" },
+        ],
+      }),
+    ]);
+
+    const res = await tool("paul_create_idea").handler({ text: "Modo oscuro para PAUL" });
+
+    expect((JSON.parse(res.content[0].text) as Record<string, any>).idea.id).toBe(41);
   });
 
   it("reports confirmed:false when the idea is not on the board after posting", async () => {

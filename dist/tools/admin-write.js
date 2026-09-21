@@ -222,6 +222,27 @@ async function runPeopleAction(admin, args) {
  * carries the secret and not the whole roster page around it.
  */
 const PASSWORD_PHRASE = /(?:nueva\s+)?(?:contrase[nñ]a|password|pin)\b[^\n]{0,80}/gi;
+/**
+ * Anything shaped like an email address. Bounded on both sides so a hostile
+ * page cannot make it backtrack: every quantifier is over a character class
+ * that excludes the delimiter that follows it.
+ */
+const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,24}/g;
+/** Email addresses replaced by a marker, so the text says what was removed. */
+const EMAIL_REDACTION = "[correo omitido]";
+/**
+ * Removes email addresses from text that is about to leave the panel.
+ *
+ * A tool result is written to the MCP client's history, so whatever this
+ * returns outlives the call. The people page carries the whole roster's
+ * addresses, and the password sentence itself often names the collaborator by
+ * email. None of that is needed to hand over a password, and every address
+ * that IS needed can be read from `people` in the same result or from
+ * paul_admin_people — which is the roster, not a transcript.
+ */
+function redactEmails(text) {
+    return text.replace(EMAIL_RE, EMAIL_REDACTION);
+}
 /** The sentence carrying the new password, or the whole page when it eludes us. */
 function passwordLine(html) {
     const matches = stripTags(html).match(PASSWORD_PHRASE) ?? [];
@@ -230,17 +251,22 @@ function passwordLine(html) {
     const withValue = matches.filter((m) => /[:=]\s*\S/.test(m));
     const hit = (withValue.length > 0 ? withValue : matches).at(-1);
     if (hit)
-        return { text: hit.trim() };
+        return { text: redactEmails(hit.trim()) };
     // Isolating the line is a best-effort match on wording we could not verify
     // against the live panel, and the password is shown ONCE. So a miss falls
-    // back to the page text rather than dropping it: handing the whole page to
-    // the admin who just triggered the reset is a far smaller problem than
-    // destroying a secret that cannot be recovered.
+    // back to the page text rather than dropping it: handing the page to the
+    // admin who just triggered the reset is a far smaller problem than
+    // destroying a secret that cannot be recovered. The addresses go, though —
+    // they are recoverable, the password is not.
+    const fallback = truncateText(html);
     return {
-        ...truncateText(html),
+        ...fallback,
+        text: redactEmails(fallback.text),
         note: "The password line could not be isolated, so the whole page is returned " +
-            "in `text` — the password is shown only once and must not be dropped. " +
-            "Read it from there, hand it to the user, and do not repeat the rest.",
+            "in `text`, with every email address replaced by " +
+            `"${EMAIL_REDACTION}" — the password is shown only once and must not be ` +
+            "dropped, but the roster's addresses must not leave the panel. Read the " +
+            "password from there, hand it to the user, and do not repeat the rest.",
     };
 }
 function peopleWriteResult(action, uid, html) {

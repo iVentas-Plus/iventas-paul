@@ -24,6 +24,25 @@ import { textResult, errorResult, type ToolResult } from "./shared.js";
 /** Hard cap on the free-text projection of a page, in characters. */
 export const MAX_TEXT_CHARS = 4000;
 
+/**
+ * How many boards the roster sweep reads at a time.
+ *
+ * Serially, the sweep takes as long as the roster is; unboundedly parallel, it
+ * opens as many sockets to PAUL as the roster is long. Both scale with a
+ * number nobody on this side controls, and the panel is a single PHP app.
+ */
+export const SWEEP_CONCURRENCY = 5;
+
+/**
+ * The most collaborators one sweep will read.
+ *
+ * A sweep is one HTTP request per person; past this point the right answer is
+ * a uid, not a bigger fan-out. The cap truncates rather than refusing, and the
+ * result names every uid it skipped so the caller can ask for those directly
+ * instead of guessing what is missing.
+ */
+export const MAX_SWEEP_PEOPLE = 40;
+
 /** The `<select name="u">` on admin/tasks.php is the panel's roster of uids. */
 const USER_SELECT_NAME = "u";
 
@@ -124,7 +143,10 @@ const TASKS_DESCRIPTION =
   "person's board. WITHOUT `uid`, it sweeps every uid in the panel's own user " +
   "list and returns every board plus a per-person count summary; that sweep " +
   "costs ONE HTTP REQUEST PER PERSON, so pass a uid whenever you already know " +
-  "it. Each task carries id, title, type, estMin, priority (1=alta), status " +
+  `it. The sweep reads at most ${MAX_SWEEP_PEOPLE} collaborators; past that it ` +
+  "returns `truncated: true` plus a `skipped` list of the uids it did NOT " +
+  "read — ask for those one at a time and never report them as having no " +
+  "tasks. Each task carries id, title, type, estMin, priority (1=alta), status " +
   "pill, rank (the queue position the collaborator sees), context, client, " +
   "requester and week.";
 
@@ -162,9 +184,38 @@ export interface BoardSweep {
   swept: number;
   summary: Array<{ uid: string; name: string; total: number }>;
   boards: Array<{ uid: string; name: string; tasks: ReturnType<typeof parseAdminTasks> }>;
+  /** Present only when the roster was longer than the cap. */
+  truncated?: true;
+  /** The uids left unswept, so the caller can ask for them one by one. */
+  skipped?: string[];
+  note?: string;
 }
 
-/** One request to learn the roster, then one per collaborator. */
+/**
+ * Runs `task` over `items` with at most `limit` in flight, preserving order.
+ *
+ * Results are written by index, so concurrency never reshuffles the output:
+ * the summary keeps the order the panel itself shows. The first rejection
+ * propagates, exactly as the serial loop it replaces did.
+ */
+async function mapWithLimit<T, R>(
+  items: T[],
+  limit: number,
+  task: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await task(items[index]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+/** One request to learn the roster, then one per collaborator, in batches. */
 async function sweepAllBoards(
   admin: Pick<PaulAdminClient, "page" | "tasksPage">,
 ): Promise<BoardSweep | { error: true; message: string }> {
@@ -179,15 +230,29 @@ async function sweepAllBoards(
         "sweep. Pass an explicit uid.",
     };
   }
-  const boards: BoardSweep["boards"] = [];
-  for (const person of roster) {
-    const tasks = parseAdminTasks(await admin.tasksPage(person.value));
-    boards.push({ uid: person.value, name: person.label, tasks });
-  }
+  const swept = roster.slice(0, MAX_SWEEP_PEOPLE);
+  const skipped = roster.slice(MAX_SWEEP_PEOPLE).map((o) => o.value);
+  const boards = await mapWithLimit(swept, SWEEP_CONCURRENCY, async (person) => ({
+    uid: person.value,
+    name: person.label,
+    tasks: parseAdminTasks(await admin.tasksPage(person.value)),
+  }));
   return {
     swept: boards.length,
     summary: boards.map((b) => ({ uid: b.uid, name: b.name, total: b.tasks.length })),
     boards,
+    ...(skipped.length > 0
+      ? {
+          truncated: true as const,
+          skipped,
+          note:
+            `The roster has ${roster.length} collaborators and a sweep costs one ` +
+            `request each, so only the first ${MAX_SWEEP_PEOPLE} were read. The ` +
+            "uids in `skipped` were NOT read — call paul_admin_tasks again with " +
+            "one of them as `uid` to get that board. Do not report the missing " +
+            "people as having no tasks.",
+        }
+      : {}),
   };
 }
 

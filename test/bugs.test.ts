@@ -1,45 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { z } from "zod";
 import { PaulClient, configFromEnv } from "../src/client.js";
 import { registerBugsTools } from "../src/tools/bugs.js";
-import type { ToolResult } from "../src/tools/shared.js";
-import {
-  jsonResponse,
-  mockFetchSequence,
-  callInfo,
-  captureToolHandler,
-  TEST_ENV,
-} from "./helpers.js";
+import { jsonResponse, mockFetchSequence, callInfo, namedTool, TEST_ENV } from "./helpers.js";
 
 const LOGIN_OK = { ok: true, user: { uid: "u1", name: "Diego", role: "dev" } };
-
-type Handler = (args: Record<string, unknown>) => Promise<ToolResult>;
-type Registrar = { registerTool: (n: string, c: unknown, h: unknown) => void };
 
 function makeClient(): PaulClient {
   return new PaulClient(configFromEnv({ ...TEST_ENV }));
 }
 
-/**
- * registerBugsTools installs three tools, and captureToolHandler keeps only
- * the last one, so every registration but the requested name is filtered out
- * before it reaches the capturing server. The tool's inputSchema is returned
- * too, so the zod limits can be asserted directly.
- */
-function tool(name: string): { handler: Handler; input: Record<string, z.ZodTypeAny> } {
-  let input: Record<string, z.ZodTypeAny> = {};
-  const handler = captureToolHandler((server: McpServer, client: PaulClient) => {
-    const only: Registrar = {
-      registerTool: (n, config, h) => {
-        if (n !== name) return;
-        input = (config as { inputSchema?: Record<string, z.ZodTypeAny> }).inputSchema ?? {};
-        (server as unknown as Registrar).registerTool(n, config, h);
-      },
-    };
-    registerBugsTools(only as unknown as McpServer, client);
-  }, makeClient());
-  return { handler, input };
+/** One of the three tools registerBugsTools installs, by name. */
+function tool(name: string) {
+  return namedTool(registerBugsTools, makeClient(), name);
 }
 
 afterEach(() => {

@@ -18,6 +18,8 @@ import {
   registerAdminActionTool,
   registerAdminAskTool,
   MAX_TEXT_CHARS,
+  MAX_SWEEP_PEOPLE,
+  SWEEP_CONCURRENCY,
 } from "../src/tools/admin.js";
 import { captureToolHandler } from "./helpers.js";
 import type { ToolResult } from "../src/tools/shared.js";
@@ -39,6 +41,12 @@ const ROSTER_HTML = `
 <option value="arturo">Arturo García — Desarrollo</option></select>`;
 
 const SINGLE_ROSTER_HTML = '<select name="u"><option value="solo">Solo — Dev</option></select>';
+
+/** The panel's roster select, built from a list of uids. */
+function rosterHtml(uids: string[]): string {
+  const options = uids.map((uid) => `<option value="${uid}">${uid}</option>`).join("");
+  return `<select name="u">${options}</select>`;
+}
 
 function board(id: number, title: string): string {
   return `<div class="adm-task" data-id="${id}"><form><input name="title" value="${title}">
@@ -223,6 +231,57 @@ describe("paul_admin_tasks", () => {
 
     expect(payload.error).toBe(true);
     expect(String(payload.message)).toContain("user list");
+  });
+
+  it("keeps at most SWEEP_CONCURRENCY requests in flight", async () => {
+    // The sweep is one request per collaborator. Serial, it takes as long as
+    // the roster is; unbounded, it opens as many sockets as the roster is
+    // long. Both scale with a number nobody controls.
+    const roster = Array.from({ length: 12 }, (_, i) => `u${i}`);
+    let inFlight = 0;
+    let peak = 0;
+    const admin = fakeAdmin({
+      page: vi.fn(async () => rosterHtml(roster)),
+      tasksPage: vi.fn(async () => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        inFlight -= 1;
+        return board(1, "A");
+      }),
+    });
+
+    const payload = payloadOf(await handlerFor(registerAdminTasksTool, admin)({}));
+
+    expect(admin.tasksPage).toHaveBeenCalledTimes(12);
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(SWEEP_CONCURRENCY);
+    expect(payload.swept).toBe(12);
+    // Concurrency must not reshuffle the output: the summary stays in roster
+    // order, which is the order the panel itself shows.
+    expect((payload.summary as Array<{ uid: string }>).map((s) => s.uid)).toEqual(roster);
+  });
+
+  it("caps the sweep and says exactly who was left out", async () => {
+    const roster = Array.from({ length: MAX_SWEEP_PEOPLE + 3 }, (_, i) => `u${i}`);
+    const admin = fakeAdmin({ page: vi.fn(async () => rosterHtml(roster)) });
+
+    const payload = payloadOf(await handlerFor(registerAdminTasksTool, admin)({}));
+
+    expect(admin.tasksPage).toHaveBeenCalledTimes(MAX_SWEEP_PEOPLE);
+    expect(payload.swept).toBe(MAX_SWEEP_PEOPLE);
+    expect(payload.truncated).toBe(true);
+    expect(payload.skipped).toEqual(roster.slice(MAX_SWEEP_PEOPLE));
+    expect(String(payload.note)).toContain("uid");
+  });
+
+  it("does not flag a roster within the cap as truncated", async () => {
+    const admin = fakeAdmin({ page: vi.fn(async () => ROSTER_HTML) });
+
+    const payload = payloadOf(await handlerFor(registerAdminTasksTool, admin)({}));
+
+    expect(payload.truncated).toBeUndefined();
+    expect(payload.skipped).toBeUndefined();
   });
 
   it("negative: a PaulAdminError during the sweep is surfaced", async () => {
@@ -505,6 +564,48 @@ describe("paul_admin_people", () => {
     // cannot be isolated — and the secret must survive anyway.
     expect(String(payload.text)).toContain("7fQ2x9");
     expect(String(payload.note)).toMatch(/password/i);
+  });
+
+  it("boundary: the fallback keeps the secret but not the whole team's emails", async () => {
+    // The fallback returns the people page, which carries every
+    // collaborator's email. A tool result is written to the client's history,
+    // so those addresses leave the panel for good. The password is the only
+    // thing that cannot be recovered; the emails can be read again from
+    // paul_admin_people whenever they are actually needed.
+    const page = `${PEOPLE_HTML}<p>Clave temporal de antonio: 7fQ2x9</p>`;
+    const admin = fakeAdmin({ resetPassword: vi.fn(async () => page) });
+    const payload = payloadOf(
+      await handlerFor(registerAdminPeopleTool, admin)({
+        action: "reset_password",
+        uid: "antonio",
+      }),
+    );
+
+    expect(String(payload.text)).toContain("7fQ2x9");
+    expect(String(payload.text)).not.toContain("aleks@iventas.com");
+    expect(String(payload.text)).not.toContain("antonio@iventas.com");
+    // The roster is the place emails belong, and it is still returned intact.
+    expect((payload.people as Array<{ email: string }>).map((p) => p.email)).toEqual([
+      "aleks@iventas.com",
+      "antonio@iventas.com",
+    ]);
+  });
+
+  it("boundary: an isolated password line that happens to contain an email is redacted too", async () => {
+    const admin = fakeAdmin({
+      resetPassword: vi.fn(
+        async () => `${PEOPLE_HTML}<p>Nueva contraseña de antonio@iventas.com: abc123</p>`,
+      ),
+    });
+    const payload = payloadOf(
+      await handlerFor(registerAdminPeopleTool, admin)({
+        action: "reset_password",
+        uid: "antonio",
+      }),
+    );
+
+    expect(String(payload.text)).toContain("abc123");
+    expect(String(payload.text)).not.toContain("antonio@iventas.com");
   });
 
   it("a write without a uid refuses before making a request", async () => {
