@@ -83,6 +83,69 @@ describe("PaulSession", () => {
     expect(headerOf(mock, 1, "cookie")).toBeUndefined();
   });
 
+  it("merges a Headers instance, not only a plain object", async () => {
+    // RequestInit allows a plain object, a Headers instance and an array of
+    // tuples. Spreading `init.headers` as if it were always a plain object
+    // dropped the other two silently — a POST would go out with no
+    // Content-Type and PAUL would parse no body at all.
+    const mock = mockFetchSequence([jsonResponse({ ok: true })]);
+
+    await new PaulSession().fetch("https://paul.example.com/x", {
+      headers: new Headers({ "Content-Type": "application/json" }),
+    });
+
+    expect(headerOf(mock, 0, "content-type")).toBe("application/json");
+    expect(headerOf(mock, 0, "user-agent")).toMatch(/Mozilla\/5\.0/);
+  });
+
+  it("merges an array of header tuples", async () => {
+    const mock = mockFetchSequence([jsonResponse({ ok: true })]);
+
+    await new PaulSession().fetch("https://paul.example.com/x", {
+      headers: [["Content-Type", "application/x-www-form-urlencoded"]],
+    });
+
+    expect(headerOf(mock, 0, "content-type")).toBe("application/x-www-form-urlencoded");
+  });
+
+  it("lets the caller's own header win over the default User-Agent", async () => {
+    const mock = mockFetchSequence([jsonResponse({ ok: true })]);
+
+    await new PaulSession().fetch("https://paul.example.com/x", {
+      headers: { "User-Agent": "propio" },
+    });
+
+    expect(headerOf(mock, 0, "user-agent")).toBe("propio");
+  });
+
+  it("aborts a request PAUL accepts but never answers", async () => {
+    // The MCP server is a single stdio process: a promise that never settles
+    // hangs the tool that called it with no error to report, so every request
+    // carries a deadline.
+    const hanging = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(new Error("request aborted by timeout")),
+          );
+        }),
+    );
+    vi.stubGlobal("fetch", hanging);
+
+    await expect(
+      new PaulSession(undefined, 20).fetch("https://paul.example.com/x"),
+    ).rejects.toThrow(/abort/i);
+  });
+
+  it("keeps a caller-supplied signal instead of overriding it with the deadline", async () => {
+    const mock = mockFetchSequence([jsonResponse({ ok: true })]);
+    const controller = new AbortController();
+
+    await new PaulSession().fetch("https://paul.example.com/x", { signal: controller.signal });
+
+    expect(initOf(mock, 0).signal).toBe(controller.signal);
+  });
+
   it("clear() forces the next call to authenticate again", async () => {
     mockFetchSequence([jsonResponse({ ok: true }, { cookie: "IVCOACH=abc" })]);
     const session = new PaulSession();

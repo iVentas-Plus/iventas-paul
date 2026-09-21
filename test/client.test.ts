@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { vi } from "vitest";
-import { PaulClient, PaulApiError, configFromEnv } from "../src/client.js";
+import { PaulClient, PaulApiError, configFromEnv, DEFAULT_TIMEOUT_MS } from "../src/client.js";
 import { PaulSession } from "../src/session.js";
 import { jsonResponse, mockFetchSequence, callInfo, TEST_ENV } from "./helpers.js";
 
@@ -59,6 +59,24 @@ describe("configFromEnv", () => {
   it("strips trailing slashes from PAUL_URL overrides", () => {
     const cfg = configFromEnv({ ...TEST_ENV, PAUL_URL: "https://x.example/app/" });
     expect(cfg.url).toBe("https://x.example/app");
+  });
+
+  it("defaults the request deadline when PAUL_TIMEOUT_MS is not set", () => {
+    expect(configFromEnv({ ...TEST_ENV }).timeoutMs).toBe(DEFAULT_TIMEOUT_MS);
+  });
+
+  it("honours a positive PAUL_TIMEOUT_MS override", () => {
+    expect(configFromEnv({ ...TEST_ENV, PAUL_TIMEOUT_MS: "5000" }).timeoutMs).toBe(5000);
+  });
+
+  it("falls back to the default for an unusable PAUL_TIMEOUT_MS", () => {
+    // A bad deadline must never be the reason the server refuses to start, and
+    // no value may switch the deadline off.
+    for (const raw of ["", "   ", "abc", "0", "-1", "NaN"]) {
+      expect(configFromEnv({ ...TEST_ENV, PAUL_TIMEOUT_MS: raw }).timeoutMs).toBe(
+        DEFAULT_TIMEOUT_MS,
+      );
+    }
   });
 });
 
@@ -176,6 +194,52 @@ describe("PaulClient.currentUid", () => {
     expect(await client.currentUid()).toBe("u1");
     expect(await client.currentUid()).toBe("u1");
     expect(mock).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-authenticates when a different IVCOACH session replaces the current one", async () => {
+    // All three PAUL planes ride one cookie. When another plane's login makes
+    // PHP regenerate the session id, the cached uid was captured on a session
+    // that no longer exists: returning it would let paul_register_task file
+    // the task against the previous identity. The uid is therefore bound to
+    // the session it came from.
+    const mock = mockFetchSequence([
+      jsonResponse(LOGIN_OK, { cookie: "IVCOACH=a; path=/" }),
+      new Response("", {
+        status: 302,
+        headers: { location: "hoy.php", "set-cookie": "IVCOACH=b; path=/" },
+      }),
+      jsonResponse({ ok: true, user: { uid: "u2" } }, { cookie: "IVCOACH=b; path=/" }),
+    ]);
+    const session = new PaulSession();
+    const client = new PaulClient(configFromEnv({ ...TEST_ENV }), undefined, session);
+
+    expect(await client.currentUid()).toBe("u1");
+
+    // Another plane logs in on the same jar and PAUL hands back a new session.
+    await session.fetch("https://paul.example.com/iventas-coach/admin/hoy.php", {
+      method: "POST",
+    });
+
+    expect(await client.currentUid()).toBe("u2");
+    expect(mock).toHaveBeenCalledTimes(3);
+    expect(callInfo(mock, 2).url).toContain("action=login");
+  });
+
+  it("does not re-authenticate when the same cookie is sent back unchanged", async () => {
+    // PAUL re-sends the same Set-Cookie on ordinary responses. That is not a
+    // new session and must not cost an extra login on every call.
+    const mock = mockFetchSequence([
+      jsonResponse(LOGIN_OK, { cookie: "IVCOACH=a; path=/" }),
+      jsonResponse({ ok: true }, { cookie: "IVCOACH=a; path=/" }),
+    ]);
+    const session = new PaulSession();
+    const client = new PaulClient(configFromEnv({ ...TEST_ENV }), undefined, session);
+
+    expect(await client.currentUid()).toBe("u1");
+    await session.fetch("https://paul.example.com/iventas-coach/api.php?action=state");
+
+    expect(await client.currentUid()).toBe("u1");
+    expect(mock).toHaveBeenCalledTimes(2);
   });
 
   it("returns null without looping when PAUL logs in but reports no uid", async () => {

@@ -6,8 +6,9 @@
  * Request bodies are JSON (parsed by body_json() in lib/helpers.php);
  * every response is JSON (json_out()).
  */
-import { PaulSession, PaulApiError } from "./session.js";
+import { PaulSession, PaulApiError, DEFAULT_TIMEOUT_MS } from "./session.js";
 export { PaulApiError } from "./session.js";
+export { DEFAULT_TIMEOUT_MS } from "./session.js";
 export const DEFAULT_PAUL_URL = "https://iventas.cc/iventas-coach";
 function processEnv() {
     // SAFETY: this package runs only as a Node.js MCP server, where globalThis.process.env exists.
@@ -31,7 +32,19 @@ export function configFromEnv(env = processEnv()) {
         url: rawUrl.replace(/\/+$/, ""),
         email: env.PAUL_EMAIL,
         password: env.PAUL_PASSWORD,
+        timeoutMs: timeoutFromEnv(env.PAUL_TIMEOUT_MS),
     };
+}
+/**
+ * Reads the optional `PAUL_TIMEOUT_MS` override.
+ *
+ * Absent, empty, non-numeric or non-positive all fall back to the default:
+ * a misconfigured deadline must not be the reason the server refuses to
+ * start, and no value can disable the deadline altogether.
+ */
+function timeoutFromEnv(raw) {
+    const parsed = Number(raw?.trim());
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_TIMEOUT_MS;
 }
 /**
  * The red-gate answer key. The real UI sends the literal string `mejora` as
@@ -52,9 +65,14 @@ export class PaulClient {
     session;
     /** uid of the authenticated collaborator, learned from the login response. */
     uid = null;
+    /**
+     * The session `uid` was captured on. `-1` means "never captured", which no
+     * real session version can equal.
+     */
+    uidVersion = -1;
     constructor(config, fetchImpl, session) {
         this.config = config;
-        this.session = session ?? new PaulSession(fetchImpl);
+        this.session = session ?? new PaulSession(fetchImpl, config.timeoutMs ?? DEFAULT_TIMEOUT_MS);
     }
     /** Base URL of the PAUL installation, without a trailing slash. */
     get baseUrl() {
@@ -79,6 +97,9 @@ export class PaulClient {
         const body = (await res.json().catch(() => null));
         if (body?.user?.uid)
             this.uid = body.user.uid;
+        // Recorded AFTER the call, so it names the session this login landed on:
+        // `session.fetch` has already captured whatever cookie PAUL handed back.
+        this.uidVersion = this.session.sessionVersion();
         if (!res.ok || !body?.ok) {
             // A 403 here almost always means the session is stuck in an admin
             // read-only view, where even logging in is refused.
@@ -135,8 +156,15 @@ export class PaulClient {
         // ever reported. Keying on the cookie made this return null after an admin
         // login, and paul_register_task then blamed PAUL for "not reporting the
         // uid" — reproduced in production.
-        if (this.uid === null)
+        //
+        // The second trigger is a CHANGED session. All three planes share one
+        // IVCOACH cookie, so an admin login can make PHP regenerate the session
+        // id after we cached the uid; the cached value then names an identity the
+        // current session no longer holds, and paul_register_task would file the
+        // task against the wrong collaborator.
+        if (this.uid === null || this.uidVersion !== this.session.sessionVersion()) {
             await this.login();
+        }
         return this.uid;
     }
     /** GET action=state — full dashboard state including the user's tasks. */

@@ -111,6 +111,13 @@ Two environment variables are required (the server fails fast if either is missi
 
 `PAUL_URL` is optional and defaults to `https://iventas.cc/iventas-coach`. Set it only to target a different PAUL deployment during development or testing.
 
+`PAUL_TIMEOUT_MS` is optional and defaults to `30000` (30 s). It is the deadline
+for a single HTTP call to PAUL: without one, a connection PAUL accepts but never
+answers leaves the calling tool waiting forever, because the MCP server is a
+single stdio process with nothing to report the hang. An absent, empty,
+non-numeric or non-positive value falls back to the default — the deadline
+cannot be switched off, and a bad value never stops the server from starting.
+
 The session cookie is kept in memory only; nothing is written to disk.
 
 ### Using shell-exported variables (recommended)
@@ -125,6 +132,9 @@ export PAUL_PASSWORD=your-password
 
 # Optional: use a non-production PAUL deployment for development or testing.
 export PAUL_URL=https://example.com/iventas-coach
+
+# Optional: deadline per HTTP call, in milliseconds (default 30000).
+export PAUL_TIMEOUT_MS=30000
 ```
 
 Each agent then forwards them as shown below — the config files stay free of

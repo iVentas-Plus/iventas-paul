@@ -6,15 +6,21 @@
  * Request bodies are JSON (parsed by body_json() in lib/helpers.php);
  * every response is JSON (json_out()).
  */
-import { PaulSession, PaulApiError } from "./session.js";
+import { PaulSession, PaulApiError, DEFAULT_TIMEOUT_MS } from "./session.js";
 
 export { PaulApiError } from "./session.js";
+export { DEFAULT_TIMEOUT_MS } from "./session.js";
 
 export interface PaulConfig {
   /** Base URL up to the app folder. Defaults to the production PAUL app. */
   url: string;
   email: string;
   password: string;
+  /**
+   * Deadline for a single HTTP call, in milliseconds. Optional; absent means
+   * `DEFAULT_TIMEOUT_MS`.
+   */
+  timeoutMs?: number;
 }
 
 export const DEFAULT_PAUL_URL = "https://iventas.cc/iventas-coach";
@@ -42,7 +48,20 @@ export function configFromEnv(env: Record<string, string | undefined> = processE
     url: rawUrl.replace(/\/+$/, ""),
     email: env.PAUL_EMAIL as string,
     password: env.PAUL_PASSWORD as string,
+    timeoutMs: timeoutFromEnv(env.PAUL_TIMEOUT_MS),
   };
+}
+
+/**
+ * Reads the optional `PAUL_TIMEOUT_MS` override.
+ *
+ * Absent, empty, non-numeric or non-positive all fall back to the default:
+ * a misconfigured deadline must not be the reason the server refuses to
+ * start, and no value can disable the deadline altogether.
+ */
+function timeoutFromEnv(raw: string | undefined): number {
+  const parsed = Number(raw?.trim());
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_TIMEOUT_MS;
 }
 
 /* ---------- API response shapes (extracted from api.php) ---------- */
@@ -509,13 +528,18 @@ export class PaulClient {
   readonly session: PaulSession;
   /** uid of the authenticated collaborator, learned from the login response. */
   private uid: string | null = null;
+  /**
+   * The session `uid` was captured on. `-1` means "never captured", which no
+   * real session version can equal.
+   */
+  private uidVersion = -1;
 
   constructor(
     private readonly config: PaulConfig,
     fetchImpl?: typeof fetch,
     session?: PaulSession,
   ) {
-    this.session = session ?? new PaulSession(fetchImpl);
+    this.session = session ?? new PaulSession(fetchImpl, config.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   }
 
   /** Base URL of the PAUL installation, without a trailing slash. */
@@ -544,6 +568,9 @@ export class PaulClient {
       | { ok?: boolean; message?: string; error?: string; user?: { uid?: string } }
       | null;
     if (body?.user?.uid) this.uid = body.user.uid;
+    // Recorded AFTER the call, so it names the session this login landed on:
+    // `session.fetch` has already captured whatever cookie PAUL handed back.
+    this.uidVersion = this.session.sessionVersion();
     if (!res.ok || !body?.ok) {
       // A 403 here almost always means the session is stuck in an admin
       // read-only view, where even logging in is refused.
@@ -621,7 +648,15 @@ export class PaulClient {
     // ever reported. Keying on the cookie made this return null after an admin
     // login, and paul_register_task then blamed PAUL for "not reporting the
     // uid" — reproduced in production.
-    if (this.uid === null) await this.login();
+    //
+    // The second trigger is a CHANGED session. All three planes share one
+    // IVCOACH cookie, so an admin login can make PHP regenerate the session
+    // id after we cached the uid; the cached value then names an identity the
+    // current session no longer holds, and paul_register_task would file the
+    // task against the wrong collaborator.
+    if (this.uid === null || this.uidVersion !== this.session.sessionVersion()) {
+      await this.login();
+    }
     return this.uid;
   }
 
