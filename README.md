@@ -104,11 +104,12 @@ with the real context of the session's work.
 
 ## Configuration
 
-Three environment variables (the server fails fast if any is missing):
+Two environment variables are required (the server fails fast if either is missing):
 
-- `PAUL_URL` — base URL up to the app folder, e.g. `https://example.com/iventas-coach`
 - `PAUL_EMAIL` — the collaborator's login email
 - `PAUL_PASSWORD` — the collaborator's password
+
+`PAUL_URL` is optional and defaults to `https://iventas.cc/iventas-coach`. Set it only to target a different PAUL deployment during development or testing.
 
 The session cookie is kept in memory only; nothing is written to disk.
 
@@ -119,9 +120,11 @@ shell instead of being hardcoded in agent config files. Add to your
 `~/.zshrc` / `~/.bashrc`:
 
 ```sh
-export PAUL_URL=https://example.com/iventas-coach
 export PAUL_EMAIL=you@company.com
 export PAUL_PASSWORD=your-password
+
+# Optional: use a non-production PAUL deployment for development or testing.
+export PAUL_URL=https://example.com/iventas-coach
 ```
 
 Each agent then forwards them as shown below — the config files stay free of
@@ -135,12 +138,12 @@ One command per agent, run from the repo where you want the tools
 ```sh
 # Claude Code — project scope (writes .mcp.json in the repo root)
 claude mcp add paul --scope project \
-  --env PAUL_URL='${PAUL_URL}' --env PAUL_EMAIL='${PAUL_EMAIL}' --env PAUL_PASSWORD='${PAUL_PASSWORD}' \
+  --env PAUL_EMAIL='${PAUL_EMAIL}' --env PAUL_PASSWORD='${PAUL_PASSWORD}' \
   -- npx -y github:iVentas-Plus/iventas-paul
 
 # Claude Code — user scope (all your projects, config outside the repo)
 claude mcp add paul --scope user \
-  --env PAUL_URL='${PAUL_URL}' --env PAUL_EMAIL='${PAUL_EMAIL}' --env PAUL_PASSWORD='${PAUL_PASSWORD}' \
+  --env PAUL_EMAIL='${PAUL_EMAIL}' --env PAUL_PASSWORD='${PAUL_PASSWORD}' \
   -- npx -y github:iVentas-Plus/iventas-paul
 ```
 
@@ -166,7 +169,6 @@ this exact block is safe to commit:
       "command": "npx",
       "args": ["-y", "github:iVentas-Plus/iventas-paul"],
       "env": {
-        "PAUL_URL": "${PAUL_URL}",
         "PAUL_EMAIL": "${PAUL_EMAIL}",
         "PAUL_PASSWORD": "${PAUL_PASSWORD}"
       }
@@ -175,9 +177,9 @@ this exact block is safe to commit:
 }
 ```
 
-`${PAUL_URL:-https://example.com/iventas-coach}` sets a default so only the
-credentials need exporting. Hardcoding real values also works — but then the
-file must never be committed.
+To override the production URL for development or testing, add `PAUL_URL` to
+the environment block. Hardcoding real values also works — but then the file
+must never be committed.
 
 ### Codex — `~/.codex/config.toml`
 
@@ -188,7 +190,7 @@ NOT reach the server unless allowlisted with `env_vars`:
 [mcp_servers.paul]
 command = "npx"
 args = ["-y", "github:iVentas-Plus/iventas-paul"]
-env_vars = ["PAUL_URL", "PAUL_EMAIL", "PAUL_PASSWORD"]
+env_vars = ["PAUL_EMAIL", "PAUL_PASSWORD"]
 ```
 
 Alternatively, hardcode static values under `[mcp_servers.paul.env]` (keep
@@ -234,7 +236,6 @@ string and the server fails fast telling you which one is missing):
       "type": "local",
       "command": ["npx", "-y", "github:iVentas-Plus/iventas-paul"],
       "environment": {
-        "PAUL_URL": "{env:PAUL_URL}",
         "PAUL_EMAIL": "{env:PAUL_EMAIL}",
         "PAUL_PASSWORD": "{env:PAUL_PASSWORD}"
       }
@@ -243,7 +244,7 @@ string and the server fails fast telling you which one is missing):
 }
 ```
 
-The same block works globally in `~/.config/opencode/opencode.json`.
+The same block works globally in `~/.config/opencode/opencode.json`. Add `PAUL_URL` only when overriding the production default for development or testing.
 
 ## Installing the skill into a work repo
 

@@ -22,16 +22,14 @@ afterEach(() => {
 });
 
 describe("configFromEnv", () => {
-  it("fails fast listing every missing variable", () => {
-    expect(() => configFromEnv({})).toThrowError(
-      /PAUL_URL.*PAUL_EMAIL.*PAUL_PASSWORD/s,
-    );
+  it("fails fast listing every missing credential variable", () => {
+    expect(() => configFromEnv({})).toThrowError(/PAUL_EMAIL.*PAUL_PASSWORD/s);
   });
 
   it("lists only the variables that are actually missing", () => {
     const err = (() => {
       try {
-        configFromEnv({ PAUL_URL: "https://x.example", PAUL_EMAIL: "a@b.c" });
+        configFromEnv({ PAUL_EMAIL: "a@b.c" });
         return null;
       } catch (e) {
         return e as Error;
@@ -44,7 +42,21 @@ describe("configFromEnv", () => {
     expect(missingList).not.toContain("PAUL_URL");
   });
 
-  it("strips trailing slashes from PAUL_URL", () => {
+  it("defaults to the production PAUL URL", () => {
+    const cfg = configFromEnv({ PAUL_EMAIL: "dev@example.com", PAUL_PASSWORD: "secret" });
+    expect(cfg.url).toBe("https://iventas.cc/iventas-coach");
+  });
+
+  it("treats an empty PAUL_URL override as absent", () => {
+    const cfg = configFromEnv({
+      PAUL_EMAIL: "dev@example.com",
+      PAUL_PASSWORD: "secret",
+      PAUL_URL: "  ",
+    });
+    expect(cfg.url).toBe("https://iventas.cc/iventas-coach");
+  });
+
+  it("strips trailing slashes from PAUL_URL overrides", () => {
     const cfg = configFromEnv({ ...TEST_ENV, PAUL_URL: "https://x.example/app/" });
     expect(cfg.url).toBe("https://x.example/app");
   });
