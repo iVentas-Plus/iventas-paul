@@ -77,6 +77,35 @@ function cellText(html: string): string {
   return stripTags(html).replace(/\s+/g, " ").trim();
 }
 
+/** Every `<div>` / `</div>` tag, used to walk nesting depth. */
+const DIV_TAG_RE = /<(\/?)div\b[^>]*>/gi;
+
+/**
+ * The body of a `<div>` whose opening tag ends at `from`, delimited by the
+ * `</div>` that actually closes it rather than by the first one encountered.
+ *
+ * A lazy `<div …>([\s\S]*?)</div>` stops at the first close, so any nested
+ * `<div>` truncates the block: a KPI tile loses its value, and a task card
+ * loses everything after its first inner element. The opposite mistake —
+ * matching greedily — swallows the rest of the page. Counting is the only
+ * reading of the markup that is right in both shapes.
+ *
+ * Unbalanced markup (an opening tag the document never closes) falls back to
+ * the first `</div>`, i.e. the previous behaviour, so a malformed page still
+ * yields a bounded fragment instead of the whole document.
+ */
+function divBody(html: string, from: number): string {
+  DIV_TAG_RE.lastIndex = from;
+  let depth = 1;
+  let tag: RegExpExecArray | null;
+  while ((tag = DIV_TAG_RE.exec(html)) !== null) {
+    depth += tag[1] === "/" ? -1 : 1;
+    if (depth === 0) return html.slice(from, tag.index);
+  }
+  const firstClose = html.slice(from).search(/<\/div\b/i);
+  return firstClose === -1 ? html.slice(from) : html.slice(from, from + firstClose);
+}
+
 export interface AdminTable {
   /** Nearest preceding <h1>/<h2> — the panel's own name for the section. */
   section: string | null;
@@ -160,10 +189,16 @@ export function parseHeadings(html: string): string[] {
 export function parseKpis(html: string): string[] {
   const out: string[] = [];
 
-  const tileRe = /<div\b[^>]*class="[^"]*\bkpi\b[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
+  // The tile is located by its OPENING tag; its end is found by counting, so a
+  // tile that splits label and value into sibling divs keeps both. Scanning
+  // resumes past the whole tile, so a nested `kpi` is never counted twice.
+  const tileRe = /<div\b[^>]*class="[^"]*\bkpi\b[^"]*"[^>]*>/gi;
   let m: RegExpExecArray | null;
   while ((m = tileRe.exec(html)) !== null) {
-    const text = cellText(m[1]);
+    const bodyStart = m.index + m[0].length;
+    const body = divBody(html, bodyStart);
+    tileRe.lastIndex = bodyStart + body.length;
+    const text = cellText(body);
     if (text) out.push(text);
   }
 
@@ -239,12 +274,18 @@ export interface AdminTaskRow {
  */
 export function parseAdminTasks(html: string): AdminTaskRow[] {
   const out: AdminTaskRow[] = [];
-  // Split on the card boundary rather than trying to match balanced divs:
-  // the cards contain nested forms, which no regex can pair reliably.
-  const parts = html.split(/<div\b[^>]*\bdata-id="(\d+)"[^>]*>/i);
-  for (let i = 1; i < parts.length; i += 2) {
-    const id = Number(parts[i]);
-    const card = parts[i + 1] ?? "";
+  // Each card is bounded by the `</div>` that closes its own opening tag.
+  // Splitting on the opening tag instead (as this used to) ended every card at
+  // the NEXT card, which left the last one running to the end of the document:
+  // `client`, `requester`, `week` and the status pill then read the page
+  // footer as if it were part of the mission.
+  const cardRe = /<div\b[^>]*\bdata-id="(\d+)"[^>]*>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = cardRe.exec(html)) !== null) {
+    const id = Number(match[1]);
+    const bodyStart = match.index + match[0].length;
+    const card = divBody(html, bodyStart);
+    cardRe.lastIndex = bodyStart + card.length;
     const plain = stripTags(card);
     out.push({
       id,
@@ -301,8 +342,21 @@ export function selectedValue(html: string, name: string): string | null {
   );
   const block = selectRe.exec(html);
   if (!block) return null;
-  const sel = /<option\b[^>]*value="([^"]*)"[^>]*\bselected\b/i.exec(block[1]);
-  return sel ? decodeEntities(sel[1]) : null;
+  // Find the selected <option> FIRST, then read its value. Requiring
+  // `value="…"` to appear before `selected` made a valid
+  // `<option selected value="2">` parse as "nothing selected", and
+  // parseAdminTasks reported `priority: null` for a card that has one. HTML
+  // puts no order on attributes, so neither may this.
+  const optRe = /<option\b([^>]*)>/gi;
+  let opt: RegExpExecArray | null;
+  while ((opt = optRe.exec(block[1])) !== null) {
+    if (!/\bselected\b/i.test(opt[1])) continue;
+    const value = /value="([^"]*)"/i.exec(opt[1]);
+    // An <option> with no value attribute submits its own text; that shape is
+    // handled by parseSelectOptions, and here it simply has no value to give.
+    return value ? decodeEntities(value[1]) : null;
+  }
+  return null;
 }
 
 /** The status pill PAUL prints on a task card (`done`, `pendiente`, `en curso`). */
