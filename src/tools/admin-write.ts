@@ -8,9 +8,9 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { PaulAdminClient } from "../admin-client.js";
-import { ADMIN_PAGES } from "../admin-client.js";
+import { ADMIN_PAGES, PaulAdminError } from "../admin-client.js";
 import { parseHeadings, parseAdminTasks, parseAdminPeople, stripTags } from "../admin-parse.js";
-import { textResult, errorResult, type ToolResult } from "./shared.js";
+import { textResult, errorResult, createFailureResult, type ToolResult } from "./shared.js";
 import { truncateText, unknownPageResult } from "./admin-read.js";
 
 /** Refusal made before any request: says what is missing and that nothing changed. */
@@ -46,7 +46,13 @@ const TASK_WRITE_DESCRIPTION =
   "flow (paul_start_task → paul_get_checkpoint → paul_submit_checkpoint); use " +
   "'complete' only to clean up something that will never get a checkpoint. " +
   "priority is 1=alta, 2=media, 3=baja; weeks is 0 for this week and 1..4 for " +
-  "that many weeks ahead.";
+  "that many weeks ahead. Errors: a missing required field is refused BEFORE " +
+  "any request ('Nothing was sent' — fix the argument and call again); an " +
+  "`id` that is not on that person's board is refused with nothing changed, " +
+  "so re-read the owner from paul_admin_tasks; and a 'create' that fails with " +
+  "`outcome: 'unknown'` MAY still have created the task — the panel does not " +
+  "de-duplicate, so read paul_admin_tasks for that uid BEFORE retrying, or " +
+  "you file it twice.";
 
 export function registerAdminTaskWriteTool(
   server: McpServer,
@@ -91,10 +97,19 @@ export function registerAdminTaskWriteTool(
       },
     },
     async (args) => {
+      const typed = args as TaskWriteArgs;
       try {
-        return await runTaskWrite(admin, args as TaskWriteArgs);
+        return await runTaskWrite(admin, typed);
       } catch (err) {
-        return errorResult(err);
+        // Only `create` can duplicate: update, delete and complete name an id
+        // that already exists, so repeating one converges instead of adding a
+        // row. See createFailureResult for why the distinction matters.
+        if (typed.action !== "create") return errorResult(err);
+        return createFailureResult(
+          err,
+          (e) => e instanceof PaulAdminError,
+          "paul_admin_tasks with the assignee's `uid`",
+        );
       }
     },
   );
@@ -354,6 +369,37 @@ function peopleWriteResult(action: string, uid: string, html: string): ToolResul
   });
 }
 
+/**
+ * Pages whose forms are scoped to one collaborator by `?u=<uid>`.
+ *
+ * `admin/tasks.php` is the verified one: its forms carry no `action`
+ * attribute, so a browser posts them to the current url INCLUDING its query
+ * string. A POST without `?u=` therefore applies to whatever board the panel
+ * defaults to — measured in production as a create that landed on the wrong
+ * person's list while returning a board that did not contain it. The
+ * dedicated task tools already pass it; this list stops the generic escape
+ * hatch from being the door the same bug walks back in through.
+ */
+const BOARD_SCOPED_PAGES = ["tasks"] as const;
+
+/** Refusal for a board-scoped POST with no uid — made before any request. */
+function missingBoardUidResult(page: string): ToolResult {
+  return textResult(
+    {
+      error: true,
+      page,
+      message:
+        `admin/${page}.php is scoped to ONE collaborator by \`?u=<uid>\`, and ` +
+        "its forms carry no `action`, so a POST without it is applied to " +
+        "whichever board the panel defaults to — not the person you meant. " +
+        "NOTHING WAS POSTED. Pass `userUid` (the uid whose board the row is " +
+        "on, as `paul_admin_tasks` reports it), or use paul_admin_task_write, " +
+        "which handles the scoping and the read-modify-write for you.",
+    },
+    true,
+  );
+}
+
 const ACTION_DESCRIPTION =
   "Generic escape hatch for MUTATIONS: POST a raw form to any admin page. " +
   "DANGER — this writes to a LIVE admin panel: there is no undo, no dry run " +
@@ -365,7 +411,17 @@ const ACTION_DESCRIPTION =
   "markup first. The form discriminator is usually `_form` (e.g. " +
   "{_form:'add', text:'...'} on knowledge), BUT findings.php, objectives.php " +
   "and hoy.php key off a BARE FIELD NAME instead of `_form`, so sending " +
-  "`_form` to those does nothing at all. Valid pages: " +
+  "`_form` to those does nothing at all. `userUid` becomes the `?u=<uid>` the " +
+  "panel's own forms carry: the forms have NO `action` attribute, so a " +
+  "browser posts them to the current url INCLUDING its query string, and a " +
+  "post without it lands on whichever board the panel defaults to. It is " +
+  "REQUIRED for " +
+  BOARD_SCOPED_PAGES.join(", ") +
+  " — those are rejected without it, with nothing posted — and ignored " +
+  "elsewhere. Errors: an unknown page or a missing `userUid` is refused " +
+  "BEFORE any request (nothing changed, fix the argument and call again); a " +
+  "PaulAdminError means the POST was attempted, so re-read the page with " +
+  "paul_admin_page to see what landed before retrying. Valid pages: " +
   ADMIN_PAGES.join(", ") +
   ".";
 
@@ -380,18 +436,29 @@ export function registerAdminActionTool(
       description: ACTION_DESCRIPTION,
       inputSchema: {
         page: z.string().describe(`Admin page to post to, one of: ${ADMIN_PAGES.join(", ")}`),
+        userUid: z
+          .string()
+          .optional()
+          .describe(
+            "Collaborator uid for the `?u=` the page is scoped by. Required " +
+              `for: ${BOARD_SCOPED_PAGES.join(", ")}.`,
+          ),
         fields: z
           .record(z.string())
           .describe("Exact form fields, including the page's discriminator (usually `_form`)"),
       },
     },
-    async ({ page, fields }) => {
+    async ({ page, userUid, fields }) => {
       if (!(ADMIN_PAGES as readonly string[]).includes(page)) return unknownPageResult(page);
+      if (!userUid && (BOARD_SCOPED_PAGES as readonly string[]).includes(page)) {
+        return missingBoardUidResult(page);
+      }
       try {
-        const html = await admin.submit(page, fields);
+        const html = await admin.submit(page, fields, userUid ? { u: userUid } : undefined);
         return textResult({
           ok: true,
           page,
+          userUid: userUid ?? null,
           fields,
           headings: parseHeadings(html),
           ...truncateText(html),

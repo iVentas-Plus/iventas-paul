@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { PaulClient, Urgency } from "../client.js";
 import { PaulApiError } from "../client.js";
-import { textResult, errorResult, type ToolResult } from "./shared.js";
+import { textResult, errorResult, createFailureResult, type ToolResult } from "./shared.js";
 
 export interface AssignResult {
   ok: boolean;
@@ -23,24 +23,7 @@ export interface AssignResult {
   message?: string;
 }
 
-/**
- * Warning for a create whose outcome is UNKNOWN.
- *
- * Measured in production: `assign_confirm` is NOT idempotent — two identical
- * calls created tasks 947 and 948. So a failure that happens after the request
- * left (timeout, socket error, DNS, abort) may sit on either side of the
- * server's commit, and a blind retry is how a duplicate lands in a panel that
- * has no undo.
- */
-const AMBIGUOUS_CREATE_WARNING =
-  "The task MAY have been created: the request failed before PAUL's answer " +
-  "could be read, so the outcome is UNKNOWN. assign_confirm does NOT " +
-  "de-duplicate — two identical calls create two tasks (verified in " +
-  "production). Do NOT retry blindly: verify first with paul_tasks (or " +
-  "paul_admin_tasks for another person's list) and only create it again if " +
-  "the task is not there.";
-
-/** The same warning, condensed for the tool descriptions. */
+/** The ambiguous-create warning, condensed for the tool descriptions. */
 const AMBIGUOUS_CREATE_HINT =
   "If this fails with outcome 'unknown' the task MAY already exist: " +
   "assign_confirm does not de-duplicate, so verify with paul_tasks (or " +
@@ -51,19 +34,16 @@ const AMBIGUOUS_CREATE_HINT =
  * that matters: did the server answer?
  *
  * A PaulApiError carries an HTTP status, so PAUL answered and the outcome is
- * deterministic — report it verbatim. Anything else is a transport-level
- * failure with no status at all, and the create may or may not have committed.
+ * deterministic. Anything else is a transport-level failure with no status at
+ * all, and the create may or may not have committed. The shared helper owns
+ * the wording; measured in production, `assign_confirm` is NOT idempotent —
+ * two identical calls created tasks 947 and 948.
  */
-function createFailureResult(err: unknown): ToolResult {
-  if (err instanceof PaulApiError) return errorResult(err);
-  return textResult(
-    {
-      error: true,
-      outcome: "unknown",
-      message: err instanceof Error ? err.message : String(err),
-      warning: AMBIGUOUS_CREATE_WARNING,
-    },
-    true,
+function assignFailureResult(err: unknown): ToolResult {
+  return createFailureResult(
+    err,
+    (e) => e instanceof PaulApiError,
+    "paul_tasks (or paul_admin_tasks for another person's list)",
   );
 }
 
@@ -198,7 +178,7 @@ export function registerRegisterTaskTool(server: McpServer, client: PaulClient):
         });
         return textResult(result, !result.ok);
       } catch (err) {
-        return createFailureResult(err);
+        return assignFailureResult(err);
       }
     },
   );
@@ -249,7 +229,7 @@ export function registerAssignTaskTool(server: McpServer, client: PaulClient): v
         });
         return textResult(result, !result.ok);
       } catch (err) {
-        return createFailureResult(err);
+        return assignFailureResult(err);
       }
     },
   );

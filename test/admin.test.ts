@@ -401,6 +401,62 @@ describe("paul_admin_task_write", () => {
     expect(admin.updateTask).not.toHaveBeenCalled();
   });
 
+  it("a transport failure on create reports an UNKNOWN outcome, not a plain error", async () => {
+    // The panel does not de-duplicate: a failure after the request left may
+    // sit on either side of the commit, so "it failed" invites a retry that
+    // files the task twice. Only the caller can tell, and only by looking.
+    const admin = fakeAdmin({
+      addTask: vi.fn(async () => {
+        throw new TypeError("fetch failed");
+      }),
+    });
+    const res = await handlerFor(registerAdminTaskWriteTool, admin)({
+      action: "create",
+      userUid: "arturo",
+      title: "Una misión",
+    });
+
+    expect(res.isError).toBe(true);
+    const payload = payloadOf(res);
+    expect(payload.outcome).toBe("unknown");
+    expect(String(payload.warning)).toContain("paul_admin_tasks");
+    expect(String(payload.message)).toContain("fetch failed");
+  });
+
+  it("a panel error on create is deterministic and reported as such", async () => {
+    // A PaulAdminError means the panel answered, so nothing is ambiguous.
+    const admin = fakeAdmin({
+      addTask: vi.fn(async () => {
+        throw new PaulAdminError("admin/tasks.php answered 500 to the form POST.");
+      }),
+    });
+    const res = await handlerFor(registerAdminTaskWriteTool, admin)({
+      action: "create",
+      userUid: "arturo",
+      title: "Una misión",
+    });
+
+    expect(res.isError).toBe(true);
+    expect(payloadOf(res).outcome).toBeUndefined();
+    expect(String(payloadOf(res).message)).toContain("answered 500");
+  });
+
+  it("a transport failure on a non-create action stays a plain error", async () => {
+    const admin = fakeAdmin({
+      deleteTask: vi.fn(async () => {
+        throw new TypeError("fetch failed");
+      }),
+    });
+    const res = await handlerFor(registerAdminTaskWriteTool, admin)({
+      action: "delete",
+      id: 698,
+      userUid: "arturo",
+    });
+
+    expect(res.isError).toBe(true);
+    expect(payloadOf(res).outcome).toBeUndefined();
+  });
+
   it("update without an id refuses before making a request", async () => {
     const admin = fakeAdmin();
     const res = await handlerFor(registerAdminTaskWriteTool, admin)({
@@ -710,13 +766,57 @@ describe("paul_admin_action", () => {
       fields: { _form: "add", user_uid: "", text: "PAUL debe recordar esto" },
     });
 
-    expect(admin.submit).toHaveBeenCalledWith("knowledge", {
-      _form: "add",
-      user_uid: "",
-      text: "PAUL debe recordar esto",
-    });
+    expect(admin.submit).toHaveBeenCalledWith(
+      "knowledge",
+      { _form: "add", user_uid: "", text: "PAUL debe recordar esto" },
+      undefined,
+    );
     expect(payloadOf(res).ok).toBe(true);
     expect(payloadOf(res).headings).toEqual(["Guardado"]);
+  });
+
+  it("forwards userUid as the ?u= the panel's own forms carry", async () => {
+    // The panel's forms have no `action` attribute, so a browser posts them to
+    // the CURRENT url including its query string. Posting without ?u= applies
+    // the change to whichever board the panel defaults to — the production bug
+    // the dedicated task tools already fixed, reachable again through this
+    // escape hatch.
+    const admin = fakeAdmin();
+    await handlerFor(registerAdminActionTool, admin)({
+      page: "tasks",
+      userUid: "arturo",
+      fields: { _form: "delete_task", id: "698" },
+    });
+
+    expect(admin.submit).toHaveBeenCalledWith(
+      "tasks",
+      { _form: "delete_task", id: "698" },
+      { u: "arturo" },
+    );
+  });
+
+  it("refuses to post to a board-scoped page without userUid, before any request", async () => {
+    const admin = fakeAdmin();
+    const res = await handlerFor(registerAdminActionTool, admin)({
+      page: "tasks",
+      fields: { _form: "delete_task", id: "698" },
+    });
+
+    expect(res.isError).toBe(true);
+    expect(admin.submit).not.toHaveBeenCalled();
+    expect(String(payloadOf(res).message)).toContain("userUid");
+    expect(String(payloadOf(res).message)).toContain("paul_admin_task_write");
+  });
+
+  it("does not require userUid on a page that is not scoped by ?u=", async () => {
+    const admin = fakeAdmin();
+    const res = await handlerFor(registerAdminActionTool, admin)({
+      page: "knowledge",
+      fields: { _form: "add", text: "algo" },
+    });
+
+    expect(res.isError).toBeUndefined();
+    expect(admin.submit).toHaveBeenCalledWith("knowledge", { _form: "add", text: "algo" }, undefined);
   });
 
   it("validation: a page not in ADMIN_PAGES is rejected without posting anything", async () => {
