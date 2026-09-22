@@ -1,25 +1,106 @@
 # iventas-paul
 
 MCP server (stdio) that lets AI coding agents — Claude Code, Codex, OpenCode —
-register and close the user's tasks in **PAUL** (the iVentas COACH task
-manager). After finishing dev work, the agent finds the matching task, starts
-it, requests PAUL's 3 AI validation questions, and answers them with the real
-context of the session's work. There is no direct create-task API in PAUL, so
-new tasks are registered through PAUL's coach chat dialogue with defensive
-verification against the task list.
+register, assign and close the user's tasks in **PAUL** (the iVentas COACH task
+manager), file and triage team requests, read their discussion threads, and
+administer the team. After finishing dev work, the agent finds the matching
+task, starts it, requests PAUL's 3 AI validation questions, and answers them
+with the real context of the session's work.
 
 ## Tools
+
+### Tasks
 
 | Tool | Purpose |
 | --- | --- |
 | `paul_tasks` | List the user's tasks with a summary of counts by status |
 | `paul_start_task` | Start (or resume) a task by id |
+| `paul_task_action` | Pause, send to review, delete, bounce, reassign, or move a task between weeks |
+| `paul_reorder_task` | Move a pending task in the queue (spends 1 of 5 weekly priority moves) |
+
+### Assignment
+
+| Tool | Purpose |
+| --- | --- |
+| `paul_people` | The roster — the only source of the `uid` every assignment needs |
+| `paul_register_task` | Create a task in your own list (one direct API call) |
+| `paul_assign_task` | Create a task in someone else's list |
+| `paul_undo_assignment` | Delete a task you just created, within the server's undo window |
+
+### Closing a task
+
+| Tool | Purpose |
+| --- | --- |
 | `paul_get_checkpoint` | Get PAUL's 3 validation questions (begins the close flow) |
 | `paul_submit_checkpoint` | Submit answers; returns PAUL's verdict |
-| `paul_register_task` | Register a new task via the chat dialogue, verified against state |
-| `paul_reorder_task` | Move a pending task in the queue (spends 1 of 5 weekly priority moves) |
 | `paul_resolve_red_gate` | Resolve a team-visible red flag with an honest prevention plan |
-| `paul_chat` | Free-form message to PAUL (reorder, pause, ask anything) |
+| `paul_confirm_notified` | Clear a task parked until its requester confirms the client was told |
+
+### Peticiones — the team request queue
+
+| Tool | Purpose |
+| --- | --- |
+| `paul_requests` | The queue grouped by status, with each request's declared money value |
+| `paul_create_request` | File a bug, idea, mejora or soporte request (also migrates a historical row) |
+| `paul_request_thread` | Read one request with its whole comment thread and mention roster |
+| `paul_comment_request` | Comment on a thread, notifying people by uid |
+| `paul_request_action` | Take, assign, close (`hecha`) or discard a request |
+| `paul_notifications` | The bell: @mentions and thread activity; optionally mark them read |
+
+### Bugs, ideas and tips (historical boards)
+
+| Tool | Purpose |
+| --- | --- |
+| `paul_bugs` | List team bugs grouped by status, with the assignable roster |
+| `paul_report_bug` | Report a bug (the server de-duplicates and may merge it into an existing one) |
+| `paul_assign_bug` | Assign an unassigned bug to a teammate |
+| `paul_ideas` | List ideas for improving PAUL, with vote counts |
+| `paul_create_idea` | Propose an idea |
+| `paul_vote_idea` | Upvote an idea |
+| `paul_tips` | PAUL's coaching tips — daily, or scoped to one task |
+
+### Administration (accounts with the administrator role)
+
+| Tool | Purpose |
+| --- | --- |
+| `paul_admin_status` | Team-wide status: forecast, delays, red flags, pulse, commitments, kicked, history |
+| `paul_admin_tasks` | Any collaborator's board, or a sweep of everyone's |
+| `paul_admin_task_write` | Create, edit, delete or force-complete any task, for any person |
+| `paul_admin_people` | List, create, delete collaborators and reset their passwords |
+| `paul_admin_page` | Read any admin page not covered by a dedicated tool |
+| `paul_admin_action` | Submit any admin form not covered by a dedicated tool |
+| `paul_admin_ask` | Ask PAUL's own copilot a question across the whole admin dataset |
+
+### Coach
+
+| Tool | Purpose |
+| --- | --- |
+| `paul_chat` | Free-form message to PAUL |
+
+> **Peticiones replaced the bug and idea boards.** PAUL now has ONE queue for
+> everything the team asks for — bugs, ideas, improvements and support — ordered
+> by the money each request brings in or stops the company losing. File new work
+> with `paul_create_request`; `paul_report_bug` and `paul_create_idea` still
+> work but PAUL labels their boards *histórico*, and a row can be moved across
+> with `migrateSrc` + `migrateId`.
+>
+> **Taking or assigning a request creates a real task.** `paul_request_action`
+> with `take`/`assign` returns a `task_id` that exists in that person's mission
+> board — and discarding the request afterwards does NOT delete it.
+>
+> **@mentions need uids, not names.** The `@Name` text in a comment is display
+> only; the bell rings from the `mentionUids` array. Two people share the first
+> name *Diego*, so `@Diego` notifies nobody — `paul_request_thread` reports the
+> ambiguous names, and `paul_comment_request` warns when a mention rang no one.
+>
+> **How PAUL sees people.** Every assignment identifies a person by their
+> **uid** (`david`, `diegoc`, `aleks`) — never by name and never by email.
+> Resolve it with `paul_people` first.
+>
+> **The admin plane is a separate login.** PAUL is one PHP app with one session
+> cookie and two independent authentications: the JSON API and the admin panel.
+> The JSON API cannot tell you whether an account is an administrator — only
+> attempting the panel login can, which is what the `paul_admin_*` tools do.
 
 ## Configuration
 
@@ -29,6 +110,13 @@ Two environment variables are required (the server fails fast if either is missi
 - `PAUL_PASSWORD` — the collaborator's password
 
 `PAUL_URL` is optional and defaults to `https://iventas.cc/iventas-coach`. Set it only to target a different PAUL deployment during development or testing.
+
+`PAUL_TIMEOUT_MS` is optional and defaults to `30000` (30 s). It is the deadline
+for a single HTTP call to PAUL: without one, a connection PAUL accepts but never
+answers leaves the calling tool waiting forever, because the MCP server is a
+single stdio process with nothing to report the hang. An absent, empty,
+non-numeric or non-positive value falls back to the default — the deadline
+cannot be switched off, and a bad value never stops the server from starting.
 
 The session cookie is kept in memory only; nothing is written to disk.
 
@@ -44,6 +132,9 @@ export PAUL_PASSWORD=your-password
 
 # Optional: use a non-production PAUL deployment for development or testing.
 export PAUL_URL=https://example.com/iventas-coach
+
+# Optional: deadline per HTTP call, in milliseconds (default 30000).
+export PAUL_TIMEOUT_MS=30000
 ```
 
 Each agent then forwards them as shown below — the config files stay free of
@@ -114,6 +205,45 @@ env_vars = ["PAUL_EMAIL", "PAUL_PASSWORD"]
 
 Alternatively, hardcode static values under `[mcp_servers.paul.env]` (keep
 that file out of version control).
+
+> **Codex sandbox — read this before reporting a bug.** Under Codex's default
+> `workspace-write` sandbox every tool call here is cancelled, and the model
+> reports it as *"MCP tool call was canceled"* with nothing in the server's
+> logs. The cause is that MCP subprocesses do **not** inherit
+> `sandbox_workspace_write.network_access`. Measured on Codex, in this order:
+>
+> | Configuration | Shell `curl` to PAUL | MCP tool call |
+> | --- | --- | --- |
+> | default `workspace-write` | 200 | cancelled |
+> | `-c sandbox_workspace_write.network_access=true` | 200 | **still cancelled** |
+> | `--sandbox danger-full-access` | 200 | works |
+>
+> In that run, granting network access to the workspace was NOT a fix — it was
+> tried, second row above, and the subprocess stayed blocked.
+>
+> **The Codex version of that run was not recorded, so treat the table as a
+> reproduction, not as a permanent property of Codex.** Codex's own docs say
+> the network control applies to subprocesses, so this may already be fixed in
+> your version. Re-run the three rows above before widening anything — the
+> check costs one tool call:
+>
+> 1. Start with the default `workspace-write`.
+> 2. If the tool call is cancelled, retry with
+>    `-c sandbox_workspace_write.network_access=true`. **If that works, stop
+>    here** — the sandbox stays on and nothing else is needed.
+> 3. Only if it is still cancelled, and as a last resort:
+>
+> ```sh
+> codex --sandbox danger-full-access
+> ```
+>
+> That flag lifts the sandbox for the WHOLE session — every command, not just
+> this server — so reach for it only after step 2 has actually failed on your
+> version, and scope it deliberately: start the session in the repo you are
+> working on instead of making it the global default. If step 2 works for you,
+> please open an issue so this note can be narrowed to the versions that need
+> it. The limitation applies to any network-dependent MCP server, not just this
+> one. Claude Code and OpenCode are unaffected and need no sandbox change.
 
 ### OpenCode — project `opencode.json`
 

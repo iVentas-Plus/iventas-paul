@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { vi } from "vitest";
-import { PaulClient, PaulApiError, configFromEnv } from "../src/client.js";
+import { PaulClient, PaulApiError, configFromEnv, DEFAULT_TIMEOUT_MS } from "../src/client.js";
+import { PaulSession } from "../src/session.js";
 import { jsonResponse, mockFetchSequence, callInfo, TEST_ENV } from "./helpers.js";
 
 const LOGIN_OK = { ok: true, user: { uid: "u1", name: "Diego", role: "dev" } };
@@ -58,6 +59,24 @@ describe("configFromEnv", () => {
   it("strips trailing slashes from PAUL_URL overrides", () => {
     const cfg = configFromEnv({ ...TEST_ENV, PAUL_URL: "https://x.example/app/" });
     expect(cfg.url).toBe("https://x.example/app");
+  });
+
+  it("defaults the request deadline when PAUL_TIMEOUT_MS is not set", () => {
+    expect(configFromEnv({ ...TEST_ENV }).timeoutMs).toBe(DEFAULT_TIMEOUT_MS);
+  });
+
+  it("honours a positive PAUL_TIMEOUT_MS override", () => {
+    expect(configFromEnv({ ...TEST_ENV, PAUL_TIMEOUT_MS: "5000" }).timeoutMs).toBe(5000);
+  });
+
+  it("falls back to the default for an unusable PAUL_TIMEOUT_MS", () => {
+    // A bad deadline must never be the reason the server refuses to start, and
+    // no value may switch the deadline off.
+    for (const raw of ["", "   ", "abc", "0", "-1", "NaN"]) {
+      expect(configFromEnv({ ...TEST_ENV, PAUL_TIMEOUT_MS: raw }).timeoutMs).toBe(
+        DEFAULT_TIMEOUT_MS,
+      );
+    }
   });
 });
 
@@ -138,6 +157,117 @@ describe("PaulClient auth", () => {
     expect(err).toBeInstanceOf(PaulApiError);
     expect((err as PaulApiError).status).toBe(409);
     expect((err as PaulApiError).body).toMatchObject({ error: "order" });
+  });
+});
+
+describe("PaulClient.currentUid", () => {
+  it("logs in when the uid is unknown, even though the session already has a cookie", async () => {
+    // Reproduces the production failure: the ADMIN plane logged in first, so
+    // the shared IVCOACH cookie is present while api.php was never
+    // authenticated and no uid was ever reported. Keying the lazy login on the
+    // cookie made currentUid() return null and paul_register_task claim "PAUL
+    // did not report your uid on login".
+    const mock = mockFetchSequence([
+      new Response("", {
+        status: 302,
+        headers: { location: "hoy.php", "set-cookie": "IVCOACH=shared; path=/" },
+      }),
+      jsonResponse(LOGIN_OK),
+    ]);
+    const session = new PaulSession();
+    await session.fetch("https://paul.example.com/iventas-coach/admin/hoy.php", {
+      method: "POST",
+    });
+    expect(session.hasCookie()).toBe(true);
+
+    const client = new PaulClient(configFromEnv({ ...TEST_ENV }), undefined, session);
+
+    expect(await client.currentUid()).toBe("u1");
+    expect(mock).toHaveBeenCalledTimes(2);
+    expect(callInfo(mock, 1).url).toContain("action=login");
+  });
+
+  it("logs in only once when the uid is already known", async () => {
+    const mock = mockFetchSequence([jsonResponse(LOGIN_OK, { cookie: "IVCOACH=a" })]);
+    const client = makeClient();
+
+    expect(await client.currentUid()).toBe("u1");
+    expect(await client.currentUid()).toBe("u1");
+    expect(mock).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-authenticates when a different IVCOACH session replaces the current one", async () => {
+    // All three PAUL planes ride one cookie. When another plane's login makes
+    // PHP regenerate the session id, the cached uid was captured on a session
+    // that no longer exists: returning it would let paul_register_task file
+    // the task against the previous identity. The uid is therefore bound to
+    // the session it came from.
+    const mock = mockFetchSequence([
+      jsonResponse(LOGIN_OK, { cookie: "IVCOACH=a; path=/" }),
+      new Response("", {
+        status: 302,
+        headers: { location: "hoy.php", "set-cookie": "IVCOACH=b; path=/" },
+      }),
+      jsonResponse({ ok: true, user: { uid: "u2" } }, { cookie: "IVCOACH=b; path=/" }),
+    ]);
+    const session = new PaulSession();
+    const client = new PaulClient(configFromEnv({ ...TEST_ENV }), undefined, session);
+
+    expect(await client.currentUid()).toBe("u1");
+
+    // Another plane logs in on the same jar and PAUL hands back a new session.
+    await session.fetch("https://paul.example.com/iventas-coach/admin/hoy.php", {
+      method: "POST",
+    });
+
+    expect(await client.currentUid()).toBe("u2");
+    expect(mock).toHaveBeenCalledTimes(3);
+    expect(callInfo(mock, 2).url).toContain("action=login");
+  });
+
+  it("does not re-authenticate when the same cookie is sent back unchanged", async () => {
+    // PAUL re-sends the same Set-Cookie on ordinary responses. That is not a
+    // new session and must not cost an extra login on every call.
+    const mock = mockFetchSequence([
+      jsonResponse(LOGIN_OK, { cookie: "IVCOACH=a; path=/" }),
+      jsonResponse({ ok: true }, { cookie: "IVCOACH=a; path=/" }),
+    ]);
+    const session = new PaulSession();
+    const client = new PaulClient(configFromEnv({ ...TEST_ENV }), undefined, session);
+
+    expect(await client.currentUid()).toBe("u1");
+    await session.fetch("https://paul.example.com/iventas-coach/api.php?action=state");
+
+    expect(await client.currentUid()).toBe("u1");
+    expect(mock).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns null without looping when PAUL logs in but reports no uid", async () => {
+    const mock = mockFetchSequence([
+      jsonResponse({ ok: true, user: { name: "Sin uid", role: "dev" } }, { cookie: "IVCOACH=a" }),
+    ]);
+    const client = makeClient();
+
+    expect(await client.currentUid()).toBeNull();
+    expect(mock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("PaulClient.confirmNotified", () => {
+  it("posts { id } to action=confirm_notified", async () => {
+    const mock = mockFetchSequence([
+      jsonResponse(LOGIN_OK, { cookie: "IVCOACH=a" }),
+      jsonResponse({ ok: true }),
+    ]);
+    const client = makeClient();
+
+    const res = await client.confirmNotified(41);
+
+    expect(res.ok).toBe(true);
+    const call = callInfo(mock, 1);
+    expect(call.url).toContain("action=confirm_notified");
+    expect(call.method).toBe("POST");
+    expect(call.body).toEqual({ id: 41 });
   });
 });
 
@@ -229,7 +359,7 @@ describe("PaulClient.redGateAck", () => {
   const PLAN =
     "Registrar e iniciar la tarea en PAUL al comenzar el trabajo real y cerrarla al terminar.";
 
-  it("posts { flag_id, qa (hardcoded gate question), plan } to action=red_gate_ack", async () => {
+  it("posts { flag_id, qa keyed by 'mejora', plan } to action=red_gate_ack", async () => {
     const mock = mockFetchSequence([
       jsonResponse(LOGIN_OK, { cookie: "IVCOACH=a" }),
       jsonResponse({ ok: true, approved: true, message: "Plan aceptado." }),
@@ -243,8 +373,11 @@ describe("PaulClient.redGateAck", () => {
     expect(call.method).toBe("POST");
     expect(call.body).toEqual({
       flag_id: 12,
-      // The single gate question is hardcoded in lib/ai.php:548.
-      qa: [{ q: "¿Qué vas a hacer para que esto no vuelva a pasar?", a: PLAN }],
+      // The gate has a single question and the server keys it by the literal
+      // string 'mejora' — which is what PAUL's own web client sends. Sending
+      // the Spanish sentence instead (as this client used to) relies on the
+      // server matching on prose it never receives from the real UI.
+      qa: [{ q: "mejora", a: PLAN }],
       plan: PLAN,
     });
   });

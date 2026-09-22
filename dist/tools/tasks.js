@@ -13,7 +13,9 @@ export function registerTasksTool(server, client) {
             "(false = PAUL's AI spend cap is exhausted; fallback flows apply), ro " +
             "(true = the session is READ-ONLY and ALL writes will 403), and " +
             "pending_red_gate (an unresolved team-visible red flag — resolve it " +
-            "via paul_resolve_red_gate). Do NOT poll this tool in a loop: the " +
+            "via paul_resolve_red_gate) and notifs_new (unread @mentions and " +
+            "request-thread activity — read them with paul_notifications). Do NOT " +
+            "poll this tool in a loop: the " +
             "state endpoint has server-side side effects (coach messages, nudges).",
         inputSchema: {},
     }, async () => {
@@ -46,6 +48,7 @@ export function registerTasksTool(server, client) {
                 budget_ok: state.budget?.ok ?? true,
                 ro: state.ro ?? false,
                 pending_red_gate: state.pending_red_gate ?? null,
+                notifs_new: state.notifs_new ?? 0,
                 tasks,
             });
         }
