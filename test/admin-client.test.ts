@@ -336,6 +336,51 @@ describe("PaulAdminClient.submit failures", () => {
 
     await expect(makeAdmin().deleteTask(1)).rejects.toThrow(/answered 500/);
   });
+
+  it("says the write WAS applied when the POST redirects but the re-read fails", async () => {
+    // The 302 IS the panel's confirmation that the mutation committed. If the
+    // follow-up GET then fails, reporting a bare failure tells the caller the
+    // write did not happen — and for a create, that is how the same task gets
+    // filed twice in a panel with no undo.
+    mockFetchSequence([
+      redirect(), // admin login
+      redirect(), // the POST commits
+      htmlResponse("<h1>Server Error</h1>", 500), // re-reading the board fails
+    ]);
+
+    const err = await makeAdmin()
+      .addTask({ userUid: "arturo", title: "Una misión" })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(PaulAdminError);
+    expect((err as Error).message).toMatch(/APPLIED/);
+    expect((err as Error).message).toMatch(/do NOT retry/i);
+  });
+
+  it("says the same when the session expires between the POST and the re-read", async () => {
+    mockFetchSequence([
+      redirect(), // admin login
+      redirect(), // the POST commits
+      htmlResponse(LOGIN_FORM), // the re-read bounces to the login form
+      htmlResponse(LOGIN_FORM), // and the re-login does not recover it either
+      htmlResponse(LOGIN_FORM),
+    ]);
+
+    const err = await makeAdmin()
+      .addTask({ userUid: "arturo", title: "Una misión" })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(PaulAdminError);
+    expect((err as Error).message).toMatch(/APPLIED/);
+  });
+
+  it("still returns the board when the re-read succeeds", async () => {
+    mockFetchSequence([redirect(), redirect(), htmlResponse(DASHBOARD)]);
+
+    await expect(makeAdmin().addTask({ userUid: "arturo", title: "Una misión" })).resolves.toBe(
+      DASHBOARD,
+    );
+  });
 });
 
 describe("PaulAdminClient.page redirects", () => {

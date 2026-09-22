@@ -441,6 +441,34 @@ describe("paul_admin_task_write", () => {
     expect(String(payloadOf(res).message)).toContain("answered 500");
   });
 
+  it("tells the caller a create LANDED when only the board re-read failed", async () => {
+    // submit() re-raises this case once the panel has answered 302. The tool
+    // must pass the wording through, because "do NOT retry" is the whole
+    // point: the task exists, and a retry files it twice.
+    const admin = fakeAdmin({
+      addTask: vi.fn(async () => {
+        throw new PaulAdminError(
+          "The form POST to admin/tasks.php was APPLIED — the panel answered 302, which is " +
+            "how it confirms a write — but the resulting page could not be read back: " +
+            "PAUL admin GET failed (500). The change LANDED, so do NOT retry it; re-read " +
+            "the panel (paul_admin_tasks for a board, paul_admin_page otherwise).",
+        );
+      }),
+    });
+    const res = await handlerFor(registerAdminTaskWriteTool, admin)({
+      action: "create",
+      userUid: "arturo",
+      title: "Una misión",
+    });
+
+    expect(res.isError).toBe(true);
+    const payload = payloadOf(res);
+    // Deterministic, NOT "unknown": we know it landed.
+    expect(payload.outcome).toBeUndefined();
+    expect(String(payload.message)).toMatch(/APPLIED/);
+    expect(String(payload.message)).toMatch(/do NOT retry/i);
+  });
+
   it("a transport failure on a non-create action stays a plain error", async () => {
     const admin = fakeAdmin({
       deleteTask: vi.fn(async () => {

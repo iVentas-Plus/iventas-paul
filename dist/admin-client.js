@@ -183,8 +183,25 @@ export class PaulAdminClient {
         });
         // A mutation that redirects is the panel's post/redirect/get; follow it —
         // with the SAME query string, or the panel re-renders somebody else's page.
-        if (res.status === 302)
-            return this.page(page, params);
+        //
+        // The 302 IS the panel's confirmation that the write committed, so once it
+        // arrives the outcome is already decided. A failure in the follow-up GET
+        // says nothing about the mutation, and reporting it as a plain failure
+        // tells the caller the write did not happen — which, for a create, is how
+        // the same task gets filed twice in a panel with no undo. So the error is
+        // re-raised saying plainly that the write landed.
+        if (res.status === 302) {
+            try {
+                return await this.page(page, params);
+            }
+            catch (err) {
+                const detail = err instanceof Error ? err.message : String(err);
+                throw new PaulAdminError(`The form POST to admin/${page}.php was APPLIED — the panel answered 302, which is ` +
+                    `how it confirms a write — but the resulting page could not be read back: ${detail}. ` +
+                    "The change LANDED, so do NOT retry it; re-read the panel " +
+                    "(paul_admin_tasks for a board, paul_admin_page otherwise) to see the result.");
+            }
+        }
         const html = await res.text().catch(() => "");
         if (isAdminLoginPage(html)) {
             this.loggedIn = false;
