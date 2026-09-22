@@ -317,7 +317,7 @@ function missingBoardUidResult(page) {
             "which handles the scoping and the read-modify-write for you.",
     }, true);
 }
-const ACTION_DESCRIPTION = "Generic escape hatch for MUTATIONS: POST a raw form to any admin page. " +
+export const ACTION_DESCRIPTION = "Generic escape hatch for MUTATIONS: POST a raw form to any admin page. " +
     "DANGER — this writes to a LIVE admin panel: there is no undo, no dry run " +
     "and no confirmation step, and a wrong field name can blank a stored value " +
     "instead of erroring, because the panel saves whatever the form posts. Use " +
@@ -333,8 +333,10 @@ const ACTION_DESCRIPTION = "Generic escape hatch for MUTATIONS: POST a raw form 
     "post without it lands on whichever board the panel defaults to. It is " +
     "REQUIRED for " +
     BOARD_SCOPED_PAGES.join(", ") +
-    " — those are rejected without it, with nothing posted — and ignored " +
-    "elsewhere. Errors: an unknown page or a missing `userUid` is refused " +
+    " — those are rejected without it, with nothing posted. On every OTHER " +
+    "page it is optional but NOT ignored: whatever you pass is still appended " +
+    "as `?u=<uid>`, so the panel scopes the write to that person's view. Omit " +
+    "it unless you mean that. Errors: an unknown page or a missing `userUid` is refused " +
     "BEFORE any request (nothing changed, fix the argument and call again); a " +
     "PaulAdminError means the POST was attempted, so re-read the page with " +
     "paul_admin_page to see what landed before retrying. Valid pages: " +

@@ -15,6 +15,7 @@ import {
   registerAdminTaskWriteTool,
   registerAdminPeopleTool,
   registerAdminPageTool,
+  ACTION_DESCRIPTION,
   registerAdminActionTool,
   registerAdminAskTool,
   MAX_TEXT_CHARS,
@@ -845,6 +846,32 @@ describe("paul_admin_action", () => {
 
     expect(res.isError).toBeUndefined();
     expect(admin.submit).toHaveBeenCalledWith("knowledge", { _form: "add", text: "algo" }, undefined);
+  });
+
+  it("forwards userUid on a page that is not board-scoped, rather than dropping it", async () => {
+    // The description must not claim the uid is "ignored elsewhere": it is
+    // forwarded on every page, and a caller that believes otherwise would be
+    // surprised by which knowledge row the panel scopes the write to.
+    const admin = fakeAdmin();
+    await handlerFor(registerAdminActionTool, admin)({
+      page: "knowledge",
+      userUid: "arturo",
+      fields: { _form: "add", text: "algo" },
+    });
+
+    expect(admin.submit).toHaveBeenCalledWith(
+      "knowledge",
+      { _form: "add", text: "algo" },
+      { u: "arturo" },
+    );
+  });
+
+  it("the tool description does not claim userUid is ignored off the scoped pages", () => {
+    // The contract an agent reads must match what the code does: `userUid` is
+    // forwarded as `?u=` on EVERY page, so calling it ignored is false and
+    // would have an agent pass it believing nothing happens.
+    expect(ACTION_DESCRIPTION).not.toMatch(/ignored\s+elsewhere/i);
+    expect(ACTION_DESCRIPTION).toMatch(/NOT ignored/);
   });
 
   it("validation: a page not in ADMIN_PAGES is rejected without posting anything", async () => {

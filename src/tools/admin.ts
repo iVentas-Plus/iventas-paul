@@ -39,6 +39,7 @@ export {
 } from "./admin-read.js";
 export type { TruncatedText, BoardSweep } from "./admin-read.js";
 export {
+  ACTION_DESCRIPTION,
   registerAdminTaskWriteTool,
   registerAdminPeopleTool,
   registerAdminActionTool,
