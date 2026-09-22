@@ -218,19 +218,32 @@ that file out of version control).
 > | `-c sandbox_workspace_write.network_access=true` | 200 | **still cancelled** |
 > | `--sandbox danger-full-access` | 200 | works |
 >
-> So granting network access to the workspace is NOT a fix — it was tried and
-> the subprocess stayed blocked. Until Codex propagates that permission to MCP
-> subprocesses, the only configuration that works is:
+> In that run, granting network access to the workspace was NOT a fix — it was
+> tried, second row above, and the subprocess stayed blocked.
+>
+> **The Codex version of that run was not recorded, so treat the table as a
+> reproduction, not as a permanent property of Codex.** Codex's own docs say
+> the network control applies to subprocesses, so this may already be fixed in
+> your version. Re-run the three rows above before widening anything — the
+> check costs one tool call:
+>
+> 1. Start with the default `workspace-write`.
+> 2. If the tool call is cancelled, retry with
+>    `-c sandbox_workspace_write.network_access=true`. **If that works, stop
+>    here** — the sandbox stays on and nothing else is needed.
+> 3. Only if it is still cancelled, and as a last resort:
 >
 > ```sh
 > codex --sandbox danger-full-access
 > ```
 >
-> Scope it deliberately: that flag lifts the sandbox for the whole session, so
-> prefer a session started in the repo you are working on rather than making it
-> the global default. This is a Codex limitation and it applies to any
-> network-dependent MCP server, not just this one. Claude Code and OpenCode are
-> unaffected and need no sandbox change.
+> That flag lifts the sandbox for the WHOLE session — every command, not just
+> this server — so reach for it only after step 2 has actually failed on your
+> version, and scope it deliberately: start the session in the repo you are
+> working on instead of making it the global default. If step 2 works for you,
+> please open an issue so this note can be narrowed to the versions that need
+> it. The limitation applies to any network-dependent MCP server, not just this
+> one. Claude Code and OpenCode are unaffected and need no sandbox change.
 
 ### OpenCode — project `opencode.json`
 
